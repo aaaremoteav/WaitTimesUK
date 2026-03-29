@@ -585,6 +585,9 @@ const HomePage = () => {
     fetchHospitals(searchPostcode, newSort);
   };
 
+  const [locationDialogOpen, setLocationDialogOpen] = useState(false);
+  const [pendingWaitUpdate, setPendingWaitUpdate] = useState(null);
+
   const handleUpdateWaitTime = (hospital) => {
     setSelectedHospital(hospital);
     setWaitMinutes(hospital.current_wait_minutes?.toString() || "");
@@ -604,7 +607,8 @@ const HomePage = () => {
             longitude: position.coords.longitude
           });
         },
-        () => {
+        (error) => {
+          console.log("Location error:", error);
           resolve(null);
         },
         { timeout: 10000, enableHighAccuracy: true }
@@ -617,15 +621,32 @@ const HomePage = () => {
       toast.error("Please enter a valid wait time");
       return;
     }
+    
+    // Store the pending update and show location dialog
+    setPendingWaitUpdate({
+      hospital_id: selectedHospital.id,
+      wait_minutes: parseInt(waitMinutes),
+    });
+    setUpdateDialogOpen(false);
+    setLocationDialogOpen(true);
+  };
 
-    // Request location
-    toast.info("Checking your location...");
-    const location = await getUserLocation();
+  const submitWithLocation = async (shareLocation) => {
+    if (!pendingWaitUpdate) return;
+    
+    let location = null;
+    if (shareLocation) {
+      toast.info("Getting your location...");
+      location = await getUserLocation();
+      if (!location) {
+        toast.warning("Could not get location - submitting for admin approval");
+      }
+    }
 
     try {
       const response = await axios.post(`${API}/wait-times/update`, {
-        hospital_id: selectedHospital.id,
-        wait_minutes: parseInt(waitMinutes),
+        hospital_id: pendingWaitUpdate.hospital_id,
+        wait_minutes: pendingWaitUpdate.wait_minutes,
         user_latitude: location?.latitude || null,
         user_longitude: location?.longitude || null,
       });
@@ -635,7 +656,8 @@ const HomePage = () => {
       } else {
         toast.info(response.data.message);
       }
-      setUpdateDialogOpen(false);
+      setLocationDialogOpen(false);
+      setPendingWaitUpdate(null);
       fetchHospitals(searchPostcode, sortByWait);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to update wait time");
@@ -917,6 +939,55 @@ const HomePage = () => {
               data-testid="submit-wait-time-button"
             >
               Update
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Location Permission Dialog */}
+      <Dialog open={locationDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setLocationDialogOpen(false);
+          setPendingWaitUpdate(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Share Your Location?</DialogTitle>
+            <DialogDescription>
+              To verify you're at or near {selectedHospital?.name}, we need your location.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="p-4 bg-[#E5F2E8] rounded-lg">
+              <p className="text-sm text-[#007F3B] flex items-start gap-2">
+                <MapPin className="w-5 h-5 flex-shrink-0" />
+                <span><strong>Share location:</strong> Your update will be applied instantly if you're within 10km of the hospital.</span>
+              </p>
+            </div>
+            <div className="p-4 bg-slate-50 rounded-lg">
+              <p className="text-sm text-slate-600 flex items-start gap-2">
+                <Lock className="w-5 h-5 flex-shrink-0" />
+                <span><strong>Skip location:</strong> Your update will be sent to admin for manual approval.</span>
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => submitWithLocation(false)}
+              className="w-full sm:w-auto"
+              data-testid="skip-location-button"
+            >
+              Skip - Send for Approval
+            </Button>
+            <Button 
+              className="bg-[#007F3B] hover:bg-[#006630] w-full sm:w-auto"
+              onClick={() => submitWithLocation(true)}
+              data-testid="share-location-button"
+            >
+              <MapPin className="w-4 h-4 mr-2" />
+              Share Location
             </Button>
           </DialogFooter>
         </DialogContent>
