@@ -1079,6 +1079,8 @@ const AdminPage = () => {
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
   const [selectedHospital, setSelectedHospital] = useState(null);
   const [overrideMinutes, setOverrideMinutes] = useState("");
+  const [addUserDialogOpen, setAddUserDialogOpen] = useState(false);
+  const [newUser, setNewUser] = useState({ name: "", email: "", password: "", is_paid: true });
 
   useEffect(() => {
     if (!user?.is_admin) {
@@ -1159,6 +1161,37 @@ const AdminPage = () => {
       fetchData();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to delete user");
+    }
+  };
+
+  const toggleUserPaid = async (userId) => {
+    try {
+      const response = await axios.patch(`${API}/admin/users/${userId}/toggle-paid`);
+      toast.success(response.data.message);
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to update user");
+    }
+  };
+
+  const createUser = async () => {
+    if (!newUser.name || !newUser.email || !newUser.password) {
+      toast.error("Please fill in all fields");
+      return;
+    }
+    if (newUser.password.length < 6) {
+      toast.error("Password must be at least 6 characters");
+      return;
+    }
+
+    try {
+      await axios.post(`${API}/admin/users/create`, newUser);
+      toast.success("User created successfully!");
+      setAddUserDialogOpen(false);
+      setNewUser({ name: "", email: "", password: "", is_paid: true });
+      fetchData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to create user");
     }
   };
 
@@ -1289,6 +1322,18 @@ const AdminPage = () => {
             {/* Users */}
             {activeTab === "users" && (
               <div className="space-y-4">
+                {/* Add User Button */}
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => setAddUserDialogOpen(true)}
+                    className="bg-[#005EB8] hover:bg-[#004C97]"
+                    data-testid="add-user-button"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add User
+                  </Button>
+                </div>
+
                 {users.map((u) => (
                   <Card key={u.id} data-testid={`admin-user-${u.id}`}>
                     <CardContent className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -1303,8 +1348,19 @@ const AdminPage = () => {
                       </div>
                       <div className="flex items-center gap-2">
                         {u.is_admin && <Badge>Admin</Badge>}
-                        {u.is_paid && <Badge className="bg-[#007F3B]">Paid</Badge>}
+                        {u.is_paid && !u.is_admin && <Badge className="bg-[#007F3B]">Paid</Badge>}
                         {!u.is_paid && !u.is_admin && <Badge variant="secondary">Unpaid</Badge>}
+                        {u.id !== user.id && !u.is_admin && (
+                          <Button
+                            size="sm"
+                            variant={u.is_paid ? "outline" : "default"}
+                            className={!u.is_paid ? "bg-[#007F3B] hover:bg-[#006630]" : ""}
+                            onClick={() => toggleUserPaid(u.id)}
+                            data-testid={`toggle-paid-${u.id}`}
+                          >
+                            {u.is_paid ? "Revoke Access" : "Mark as Paid"}
+                          </Button>
+                        )}
                         {u.id !== user.id && (
                           <Button
                             size="sm"
@@ -1358,6 +1414,80 @@ const AdminPage = () => {
               data-testid="submit-override-button"
             >
               Override
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add User Dialog */}
+      <Dialog open={addUserDialogOpen} onOpenChange={setAddUserDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Add New User</DialogTitle>
+            <DialogDescription>
+              Create a user account and optionally mark them as paid.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="new-user-name">Full Name</Label>
+              <Input
+                id="new-user-name"
+                value={newUser.name}
+                onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                placeholder="e.g., John Smith"
+                className="mt-2"
+                data-testid="new-user-name-input"
+              />
+            </div>
+            <div>
+              <Label htmlFor="new-user-email">Email</Label>
+              <Input
+                id="new-user-email"
+                type="email"
+                value={newUser.email}
+                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                placeholder="e.g., john@example.com"
+                className="mt-2"
+                data-testid="new-user-email-input"
+              />
+            </div>
+            <div>
+              <Label htmlFor="new-user-password">Password</Label>
+              <Input
+                id="new-user-password"
+                type="password"
+                value={newUser.password}
+                onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                placeholder="Minimum 6 characters"
+                className="mt-2"
+                data-testid="new-user-password-input"
+              />
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <input
+                type="checkbox"
+                id="new-user-paid"
+                checked={newUser.is_paid}
+                onChange={(e) => setNewUser({ ...newUser, is_paid: e.target.checked })}
+                className="w-4 h-4 rounded border-slate-300 text-[#005EB8] focus:ring-[#005EB8]"
+                data-testid="new-user-paid-checkbox"
+              />
+              <Label htmlFor="new-user-paid" className="cursor-pointer">
+                Mark as paid (grant full access)
+              </Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddUserDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              className="bg-[#005EB8] hover:bg-[#004C97]"
+              onClick={createUser}
+              data-testid="create-user-button"
+            >
+              Create User
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -516,6 +516,60 @@ async def get_all_users(user = Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return users
 
+class AdminCreateUser(BaseModel):
+    email: EmailStr
+    name: str
+    password: str
+    is_paid: bool = True
+
+class AdminTogglePaid(BaseModel):
+    user_id: str
+    is_paid: bool
+
+@api_router.post("/admin/users/create")
+async def admin_create_user(data: AdminCreateUser, user = Depends(require_admin)):
+    """Admin creates a new user (can set as paid directly)"""
+    # Check if user already exists
+    existing = await db.users.find_one({"email": data.email.lower()})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    user_id = str(uuid.uuid4())
+    user_doc = {
+        "id": user_id,
+        "email": data.email.lower(),
+        "name": data.name,
+        "password_hash": hash_password(data.password),
+        "is_paid": data.is_paid,
+        "is_admin": False,
+        "payment_id": "admin-created" if data.is_paid else None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_wait_update": None
+    }
+    
+    await db.users.insert_one(user_doc)
+    
+    return {"message": "User created successfully", "user_id": user_id}
+
+@api_router.patch("/admin/users/{user_id}/toggle-paid")
+async def admin_toggle_paid(user_id: str, user = Depends(require_admin)):
+    """Toggle a user's paid status"""
+    target_user = await db.users.find_one({"id": user_id})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    new_paid_status = not target_user.get("is_paid", False)
+    
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {
+            "is_paid": new_paid_status,
+            "payment_id": "admin-verified" if new_paid_status else None
+        }}
+    )
+    
+    return {"message": f"User {'activated' if new_paid_status else 'deactivated'}", "is_paid": new_paid_status}
+
 @api_router.delete("/admin/users/{user_id}")
 async def delete_user(user_id: str, user = Depends(require_admin)):
     """Delete a user (admin only)"""
