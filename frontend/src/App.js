@@ -3,7 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { Toaster, toast } from "sonner";
-import { Search, Clock, MapPin, Building2, User, LogOut, Shield, Plus, RefreshCw, CheckCircle, XCircle, Lock, ArrowUpDown, Settings } from "lucide-react";
+import { Search, Clock, MapPin, Building2, User, LogOut, Shield, Plus, RefreshCw, CheckCircle, XCircle, Lock, ArrowUpDown, Settings, Mail } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./components/ui/card";
@@ -33,8 +33,144 @@ const NHSLogo = ({ className = "" }) => (
   </div>
 );
 
+const CONTACT_EMAIL = "harry.miles@aaasat.co.uk";
+
 // Auth Context
 const AuthContext = createContext(null);
+
+// Contact Dialog Component
+const ContactDialog = ({ open, onOpenChange }) => {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!name || !email || !message) {
+      toast.error("Please fill in all fields");
+      return;
+    }
+    
+    setSending(true);
+    // Send via mailto with pre-filled content (opens user's email client)
+    const subject = encodeURIComponent(`WaitTimes.uk Contact: ${name}`);
+    const body = encodeURIComponent(`From: ${name}\nEmail: ${email}\n\nMessage:\n${message}`);
+    window.location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}&body=${body}`;
+    
+    setTimeout(() => {
+      toast.success("Opening your email client...");
+      setSending(false);
+      onOpenChange(false);
+      setName("");
+      setEmail("");
+      setMessage("");
+    }, 500);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Contact Support</DialogTitle>
+          <DialogDescription>
+            Having issues with payment or your account? Send us a message and we'll get back to you.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div>
+            <Label htmlFor="contact-name">Your Name</Label>
+            <Input
+              id="contact-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="John Smith"
+              className="mt-2"
+              data-testid="contact-name-input"
+            />
+          </div>
+          <div>
+            <Label htmlFor="contact-email">Your Email</Label>
+            <Input
+              id="contact-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="john@example.com"
+              className="mt-2"
+              data-testid="contact-email-input"
+            />
+          </div>
+          <div>
+            <Label htmlFor="contact-message">Message</Label>
+            <textarea
+              id="contact-message"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Describe your issue..."
+              className="mt-2 w-full min-h-[100px] px-3 py-2 border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#005EB8] focus:border-transparent"
+              data-testid="contact-message-input"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button 
+            className="bg-[#005EB8] hover:bg-[#004C97]"
+            onClick={handleSubmit}
+            disabled={sending}
+            data-testid="send-contact-button"
+          >
+            {sending ? "Sending..." : "Send Message"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+// Footer Component
+const Footer = () => {
+  const [contactOpen, setContactOpen] = useState(false);
+  
+  return (
+    <>
+      <footer className="bg-[#0A1128] text-white py-8 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex items-center gap-3">
+              <NHSLogo className="h-6" />
+              <span className="text-sm text-slate-300">UK Wait Times Tracker</span>
+            </div>
+            <div className="flex items-center gap-6">
+              <button 
+                onClick={() => setContactOpen(true)}
+                className="flex items-center gap-2 text-slate-300 hover:text-white transition-colors"
+                data-testid="contact-support-button"
+              >
+                <Mail className="w-4 h-4" />
+                <span className="text-sm">Contact Support</span>
+              </button>
+            </div>
+          </div>
+          <div className="mt-6 pt-6 border-t border-slate-700 text-center">
+            <p className="text-xs text-slate-400">
+              © {new Date().getFullYear()} WaitTimes.uk. Wait time data sourced from user reports and WaitSmart.
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              For payment issues or account help, please{" "}
+              <button onClick={() => setContactOpen(true)} className="underline hover:text-slate-300">
+                contact us
+              </button>.
+            </p>
+          </div>
+        </div>
+      </footer>
+      <ContactDialog open={contactOpen} onOpenChange={setContactOpen} />
+    </>
+  );
+};
 
 export const useAuth = () => useContext(AuthContext);
 
@@ -1619,19 +1755,22 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <div className="min-h-screen bg-[#F8FAFC]">
+        <div className="min-h-screen bg-[#F8FAFC] flex flex-col">
           <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/login" element={<><LoginPage /><Footer /></>} />
+            <Route path="/register" element={<><RegisterPage /><Footer /></>} />
             <Route
               path="/*"
               element={
                 <>
                   <Header />
-                  <Routes>
-                    <Route path="/" element={<HomePage />} />
-                    <Route path="/admin" element={<AdminPage />} />
-                  </Routes>
+                  <main className="flex-1">
+                    <Routes>
+                      <Route path="/" element={<HomePage />} />
+                      <Route path="/admin" element={<AdminPage />} />
+                    </Routes>
+                  </main>
+                  <Footer />
                 </>
               }
             />
