@@ -365,7 +365,7 @@ const Header = () => {
                   onClick={() => navigate("/register")}
                   data-testid="register-button"
                 >
-                  Sign Up - £4.99
+                  Sign Up Free
                 </Button>
               </div>
             )}
@@ -380,7 +380,7 @@ const Header = () => {
 const WaitTimeBadge = ({ minutes, blurred = false }) => {
   if (minutes === null || minutes === undefined) {
     return (
-      <span className="px-3 py-1 rounded-full text-sm font-bold bg-slate-100 text-slate-500 border border-slate-200">
+      <span className={`px-3 py-1 rounded-full text-sm font-bold bg-slate-100 text-slate-500 border border-slate-200 ${blurred ? 'wait-time-blur' : ''}`}>
         No data
       </span>
     );
@@ -388,11 +388,14 @@ const WaitTimeBadge = ({ minutes, blurred = false }) => {
 
   let colorClasses = "";
   if (minutes <= 60) {
+    // Green: up to 1 hour
     colorClasses = "bg-[#E5F2E8] text-[#007F3B] border-[#007F3B]/20";
-  } else if (minutes <= 180) {
+  } else if (minutes < 180) {
+    // Amber/Yellow: 1-3 hours
     colorClasses = "bg-[#FFF8E5] text-[#B38000] border-[#FFB81C]/30";
   } else {
-    colorClasses = "bg-[#FAE9E8] text-[#D5281B] border-[#D5281B]/20";
+    // Red: 3+ hours
+    colorClasses = "bg-[#D5281B] text-white border-[#D5281B]";
   }
 
   const hours = Math.floor(minutes / 60);
@@ -481,14 +484,14 @@ const HospitalCard = ({ hospital, canSeeWaitTimes, onUpdateWaitTime, index }) =>
 
           <div className="flex flex-col items-end gap-2">
             <div className="relative">
-              {!canSeeWaitTimes && hospital.current_wait_minutes !== null && (
+              {!canSeeWaitTimes && (
                 <div className="absolute inset-0 flex items-center justify-center z-10">
                   <Lock className="w-4 h-4 text-slate-400" />
                 </div>
               )}
               <WaitTimeBadge 
                 minutes={hospital.current_wait_minutes} 
-                blurred={!canSeeWaitTimes && hospital.current_wait_minutes !== null}
+                blurred={!canSeeWaitTimes}
               />
             </div>
             
@@ -733,7 +736,7 @@ const HomePage = () => {
                   className="pulse-cta bg-[#FFB81C] hover:bg-[#E5A619] text-[#0A1128] font-bold px-8 py-3 h-auto text-lg"
                   data-testid="hero-signup-button"
                 >
-                  Sign Up for £4.99 to See Wait Times
+                  Sign Up Free
                 </Button>
               </div>
             )}
@@ -785,16 +788,16 @@ const HomePage = () => {
               <div className="flex items-center gap-3">
                 <Lock className="w-8 h-8 text-[#005EB8]" />
                 <div>
-                  <p className="font-semibold text-[#0A1128]">Wait times are hidden</p>
-                  <p className="text-sm text-slate-600">Complete your payment to unlock real-time wait times</p>
+                  <p className="font-semibold text-[#0A1128]">Upgrade to see wait times</p>
+                  <p className="text-sm text-slate-600">One-time payment of £4.99 for lifetime access</p>
                 </div>
               </div>
               <Button 
-                className="bg-[#005EB8] hover:bg-[#004C97]"
+                className="bg-[#FFB81C] hover:bg-[#E5A619] text-[#0A1128] font-bold"
                 onClick={() => window.open(PAYPAL_LINK, "_blank")}
                 data-testid="unlock-payment-button"
               >
-                Pay £4.99 to Unlock
+                Upgrade for £4.99
               </Button>
             </CardContent>
           </Card>
@@ -806,8 +809,8 @@ const HomePage = () => {
               <div className="flex items-center gap-3">
                 <Lock className="w-8 h-8 text-[#B38000]" />
                 <div>
-                  <p className="font-semibold text-[#0A1128]">Sign up to see wait times</p>
-                  <p className="text-sm text-slate-600">One-time payment of £4.99 for lifetime access</p>
+                  <p className="font-semibold text-[#0A1128]">Create a free account</p>
+                  <p className="text-sm text-slate-600">Sign up free, upgrade for £4.99 to see wait times</p>
                 </div>
               </div>
               <Button 
@@ -815,7 +818,7 @@ const HomePage = () => {
                 onClick={() => navigate("/register")}
                 data-testid="banner-signup-button"
               >
-                Sign Up Now
+                Sign Up Free
               </Button>
             </CardContent>
           </Card>
@@ -1086,7 +1089,7 @@ const LoginPage = () => {
               className="text-[#005EB8] font-medium hover:underline"
               data-testid="go-to-register-link"
             >
-              Sign up for £4.99
+              Sign up free
             </button>
           </p>
         </CardContent>
@@ -1099,45 +1102,28 @@ const LoginPage = () => {
 const RegisterPage = () => {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [paymentCompleted, setPaymentCompleted] = useState(false);
-
-  const handlePayment = () => {
-    // Open PayPal link in new window
-    const paymentWindow = window.open(PAYPAL_LINK, "_blank", "width=500,height=700");
-    
-    // Show confirmation dialog after a delay
-    setTimeout(() => {
-      setPaymentCompleted(true);
-    }, 3000);
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (step === 1) {
-      if (!name || !email || !password) {
-        toast.error("Please fill in all fields");
-        return;
-      }
-      if (password.length < 6) {
-        toast.error("Password must be at least 6 characters");
-        return;
-      }
-      setStep(2);
+    if (!name || !email || !password) {
+      toast.error("Please fill in all fields");
+      return;
+    }
+    if (password.length < 6) {
+      toast.error("Password must be at least 6 characters");
       return;
     }
 
     setLoading(true);
     try {
-      // Generate a payment ID based on timestamp
-      const paymentId = paymentCompleted ? `PAYPAL-${Date.now()}` : null;
-      await register(name, email, password, paymentId);
-      toast.success(paymentCompleted ? "Account created with full access!" : "Account created! Complete payment to unlock wait times.");
+      // Register without payment - they can upgrade later
+      await register(name, email, password, null);
+      toast.success("Account created! Upgrade to see wait times.");
       navigate("/");
     } catch (error) {
       toast.error(error.response?.data?.detail || "Registration failed");
@@ -1153,132 +1139,80 @@ const RegisterPage = () => {
             <Clock className="w-8 h-8 text-white" />
           </div>
           <CardTitle className="text-2xl" style={{ fontFamily: "'Manrope', sans-serif" }}>
-            {step === 1 ? "Create Account" : "Complete Payment"}
+            Create Free Account
           </CardTitle>
           <CardDescription>
-            {step === 1 
-              ? "Sign up to access real-time A&E wait times"
-              : "Pay £4.99 for lifetime access"
-            }
+            Sign up free, then upgrade to see wait times
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {step === 1 ? (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="name">Full Name</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  className="mt-2"
-                  data-testid="register-name-input"
-                />
-              </div>
-              <div>
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="mt-2"
-                  data-testid="register-email-input"
-                />
-              </div>
-              <div>
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  className="mt-2"
-                  data-testid="register-password-input"
-                />
-              </div>
-              <Button 
-                type="submit" 
-                className="w-full bg-[#005EB8] hover:bg-[#004C97]"
-                data-testid="register-continue-button"
-              >
-                Continue to Payment
-              </Button>
-            </form>
-          ) : (
-            <div className="space-y-6">
-              <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <p className="text-3xl font-bold text-[#0A1128]" style={{ fontFamily: "'Manrope', sans-serif" }}>
-                  £4.99
-                </p>
-                <p className="text-sm text-slate-500 mt-1">One-time payment</p>
-              </div>
-
-              <ul className="space-y-2 text-sm">
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#007F3B]" />
-                  <span>See real-time A&E wait times</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#007F3B]" />
-                  <span>Update wait times for others</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#007F3B]" />
-                  <span>Search by postcode for nearest hospitals</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#007F3B]" />
-                  <span>Lifetime access - no subscription</span>
-                </li>
-              </ul>
-
-              {!paymentCompleted ? (
-                <Button 
-                  onClick={handlePayment}
-                  className="w-full bg-[#FFB81C] hover:bg-[#E5A619] text-[#0A1128] font-bold h-12"
-                  data-testid="pay-with-paypal-button"
-                >
-                  Pay £4.99 with PayPal
-                </Button>
-              ) : (
-                <div className="space-y-4">
-                  <div className="bg-[#E5F2E8] border border-[#007F3B]/20 rounded-lg p-4 text-center">
-                    <CheckCircle className="w-8 h-8 text-[#007F3B] mx-auto mb-2" />
-                    <p className="font-medium text-[#007F3B]">Payment completed!</p>
-                  </div>
-                  <Button 
-                    onClick={handleSubmit}
-                    className="w-full bg-[#005EB8] hover:bg-[#004C97]"
-                    disabled={loading}
-                    data-testid="complete-registration-button"
-                  >
-                    {loading ? "Creating account..." : "Complete Registration"}
-                  </Button>
-                </div>
-              )}
-
-              <p className="text-center text-xs text-slate-400">
-                Secure payment via PayPal
-              </p>
-
-              <div className="border-t pt-4">
-                <Button 
-                  variant="ghost" 
-                  className="w-full text-slate-500"
-                  onClick={() => setStep(1)}
-                  data-testid="back-to-details-button"
-                >
-                  Back to details
-                </Button>
-              </div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="name">Full Name</Label>
+              <Input
+                id="name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="mt-2"
+                data-testid="register-name-input"
+              />
             </div>
-          )}
+            <div>
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="mt-2"
+                data-testid="register-email-input"
+              />
+            </div>
+            <div>
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={6}
+                className="mt-2"
+                data-testid="register-password-input"
+              />
+            </div>
+            <Button 
+              type="submit" 
+              className="w-full bg-[#005EB8] hover:bg-[#004C97]"
+              disabled={loading}
+              data-testid="register-submit-button"
+            >
+              {loading ? "Creating account..." : "Create Free Account"}
+            </Button>
+          </form>
+
+          <div className="mt-6 p-4 bg-slate-50 rounded-lg">
+            <p className="text-sm text-slate-600 text-center">
+              <strong>Free account includes:</strong>
+            </p>
+            <ul className="mt-2 space-y-1 text-sm text-slate-500">
+              <li className="flex items-center gap-2">
+                <CheckCircle className="w-3 h-3 text-[#007F3B]" />
+                View hospital list & search by postcode
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle className="w-3 h-3 text-[#007F3B]" />
+                Update wait times to help others
+              </li>
+              <li className="flex items-center gap-2">
+                <Lock className="w-3 h-3 text-slate-400" />
+                <span className="text-slate-400">See wait times (£4.99 upgrade)</span>
+              </li>
+            </ul>
+          </div>
 
           <p className="text-center text-sm text-slate-500 mt-4">
             Already have an account?{" "}
