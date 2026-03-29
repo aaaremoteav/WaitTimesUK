@@ -334,6 +334,62 @@ async def get_hospitals(
     
     return result
 
+class SimilarHospitalCheck(BaseModel):
+    name: str
+    postcode: Optional[str] = None
+
+class SimilarHospitalResponse(BaseModel):
+    id: str
+    name: str
+    address: str
+    postcode: str
+    similarity_score: float
+
+@api_router.post("/hospitals/check-similar", response_model=List[SimilarHospitalResponse])
+async def check_similar_hospitals(data: SimilarHospitalCheck, user = Depends(require_auth)):
+    """Check for similar existing hospitals before submission"""
+    # Get all approved hospitals
+    hospitals = await db.hospitals.find({"is_approved": True}, {"_id": 0}).to_list(1000)
+    
+    similar = []
+    search_name = data.name.lower().strip()
+    search_words = set(search_name.replace("hospital", "").replace("the", "").split())
+    
+    for h in hospitals:
+        hospital_name = h["name"].lower()
+        hospital_words = set(hospital_name.replace("hospital", "").replace("the", "").split())
+        
+        # Calculate similarity based on word overlap
+        if search_words and hospital_words:
+            common_words = search_words.intersection(hospital_words)
+            similarity = len(common_words) / max(len(search_words), len(hospital_words))
+        else:
+            similarity = 0
+        
+        # Also check if search name is contained in hospital name or vice versa
+        if search_name in hospital_name or hospital_name in search_name:
+            similarity = max(similarity, 0.8)
+        
+        # Check postcode match
+        if data.postcode:
+            search_postcode = data.postcode.replace(" ", "").upper()[:4]
+            hospital_postcode = h["postcode"].replace(" ", "").upper()[:4]
+            if search_postcode == hospital_postcode:
+                similarity = max(similarity, 0.5)
+        
+        if similarity >= 0.3:  # 30% similarity threshold
+            similar.append(SimilarHospitalResponse(
+                id=h["id"],
+                name=h["name"],
+                address=h["address"],
+                postcode=h["postcode"],
+                similarity_score=round(similarity, 2)
+            ))
+    
+    # Sort by similarity score descending
+    similar.sort(key=lambda x: x.similarity_score, reverse=True)
+    return similar[:5]  # Return top 5 matches
+
 @api_router.post("/hospitals/submit")
 async def submit_hospital(hospital: HospitalCreate, user = Depends(require_auth)):
     """Submit a new hospital for admin approval"""

@@ -308,6 +308,9 @@ const HomePage = () => {
   const [waitMinutes, setWaitMinutes] = useState("");
   const [submitHospitalOpen, setSubmitHospitalOpen] = useState(false);
   const [newHospital, setNewHospital] = useState({ name: "", address: "", postcode: "" });
+  const [similarHospitals, setSimilarHospitals] = useState([]);
+  const [showSimilarDialog, setShowSimilarDialog] = useState(false);
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
 
   const canSeeWaitTimes = user && (user.is_paid || user.is_admin);
 
@@ -375,7 +378,33 @@ const HomePage = () => {
     }
   };
 
-  const submitNewHospital = async () => {
+  const checkForSimilarHospitals = async () => {
+    if (!newHospital.name) {
+      toast.error("Please enter a hospital name");
+      return;
+    }
+
+    setCheckingDuplicates(true);
+    try {
+      const response = await axios.post(`${API}/hospitals/check-similar`, {
+        name: newHospital.name,
+        postcode: newHospital.postcode || null,
+      });
+      
+      if (response.data.length > 0) {
+        setSimilarHospitals(response.data);
+        setShowSimilarDialog(true);
+      } else {
+        // No similar hospitals found, proceed with submission
+        await confirmSubmitHospital();
+      }
+    } catch (error) {
+      toast.error("Failed to check for similar hospitals");
+    }
+    setCheckingDuplicates(false);
+  };
+
+  const confirmSubmitHospital = async () => {
     if (!newHospital.name || !newHospital.address || !newHospital.postcode) {
       toast.error("Please fill in all fields");
       return;
@@ -385,10 +414,41 @@ const HomePage = () => {
       await axios.post(`${API}/hospitals/submit`, newHospital);
       toast.success("Hospital submitted for admin approval!");
       setSubmitHospitalOpen(false);
+      setShowSimilarDialog(false);
       setNewHospital({ name: "", address: "", postcode: "" });
+      setSimilarHospitals([]);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to submit hospital");
     }
+  };
+
+  const selectExistingHospital = (hospital) => {
+    // Close dialogs and scroll to the hospital or show update dialog
+    setShowSimilarDialog(false);
+    setSubmitHospitalOpen(false);
+    setNewHospital({ name: "", address: "", postcode: "" });
+    setSimilarHospitals([]);
+    
+    // Find the hospital and open update dialog if user can update
+    if (canSeeWaitTimes) {
+      const existingHospital = hospitals.find(h => h.id === hospital.id);
+      if (existingHospital) {
+        handleUpdateWaitTime(existingHospital);
+        toast.success(`Selected ${hospital.name} - you can now update its wait time`);
+      }
+    } else {
+      toast.info(`${hospital.name} already exists in our database`);
+    }
+  };
+
+  const submitNewHospital = async () => {
+    if (!newHospital.name || !newHospital.address || !newHospital.postcode) {
+      toast.error("Please fill in all fields");
+      return;
+    }
+
+    // Check for similar hospitals first
+    await checkForSimilarHospitals();
   };
 
   return (
@@ -596,7 +656,13 @@ const HomePage = () => {
       </Dialog>
 
       {/* Submit Hospital Dialog */}
-      <Dialog open={submitHospitalOpen} onOpenChange={setSubmitHospitalOpen}>
+      <Dialog open={submitHospitalOpen} onOpenChange={(open) => {
+        setSubmitHospitalOpen(open);
+        if (!open) {
+          setSimilarHospitals([]);
+          setShowSimilarDialog(false);
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Submit New Hospital</DialogTitle>
@@ -646,9 +712,68 @@ const HomePage = () => {
             <Button 
               className="bg-[#005EB8] hover:bg-[#004C97]"
               onClick={submitNewHospital}
+              disabled={checkingDuplicates}
               data-testid="submit-new-hospital-button"
             >
-              Submit for Approval
+              {checkingDuplicates ? "Checking..." : "Submit for Approval"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Similar Hospitals Dialog */}
+      <Dialog open={showSimilarDialog} onOpenChange={setShowSimilarDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>
+              Did you mean one of these?
+            </DialogTitle>
+            <DialogDescription>
+              We found similar hospitals in our database. Select one if it matches, or continue to add a new hospital.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4 max-h-80 overflow-y-auto">
+            {similarHospitals.map((hospital) => (
+              <Card 
+                key={hospital.id} 
+                className="cursor-pointer hover:border-[#005EB8] hover:bg-slate-50 transition-all"
+                onClick={() => selectExistingHospital(hospital)}
+                data-testid={`similar-hospital-${hospital.id}`}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 bg-[#005EB8]/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Building2 className="w-4 h-4 text-[#005EB8]" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-[#0A1128]">{hospital.name}</p>
+                        <p className="text-sm text-slate-500">{hospital.address}</p>
+                        <p className="text-xs text-slate-400">{hospital.postcode}</p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary" className="text-xs">
+                      {Math.round(hospital.similarity_score * 100)}% match
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowSimilarDialog(false)}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button 
+              className="bg-[#005EB8] hover:bg-[#004C97] w-full sm:w-auto"
+              onClick={confirmSubmitHospital}
+              data-testid="continue-add-hospital-button"
+            >
+              Not Listed - Continue Adding
             </Button>
           </DialogFooter>
         </DialogContent>
