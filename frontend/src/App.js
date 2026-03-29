@@ -276,7 +276,7 @@ const HospitalCard = ({ hospital, canSeeWaitTimes, onUpdateWaitTime, index }) =>
               )}
             </div>
 
-            {canSeeWaitTimes && onUpdateWaitTime && (
+            {onUpdateWaitTime && (
               <Button
                 size="sm"
                 variant="outline"
@@ -606,7 +606,7 @@ const HomePage = () => {
                 key={hospital.id}
                 hospital={hospital}
                 canSeeWaitTimes={canSeeWaitTimes}
-                onUpdateWaitTime={canSeeWaitTimes ? handleUpdateWaitTime : null}
+                onUpdateWaitTime={user ? handleUpdateWaitTime : null}
                 index={index}
               />
             ))}

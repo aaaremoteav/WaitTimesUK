@@ -418,8 +418,8 @@ async def submit_hospital(hospital: HospitalCreate, user = Depends(require_auth)
     return {"message": "Hospital submitted for approval", "id": hospital_id}
 
 @api_router.post("/wait-times/update")
-async def update_wait_time(data: WaitTimeUpdate, user = Depends(require_paid_user)):
-    """Update wait time for a hospital (15 min cooldown per user)"""
+async def update_wait_time(data: WaitTimeUpdate, user = Depends(require_auth)):
+    """Update wait time for a hospital (15 min cooldown per user) - any authenticated user can update"""
     # Check cooldown
     last_update = user.get("last_wait_update")
     if last_update and not user.get("is_admin"):
