@@ -1257,6 +1257,20 @@ const AdminPage = () => {
     }
   };
 
+  const [scraping, setScraping] = useState(false);
+  
+  const triggerWaitSmartScrape = async () => {
+    setScraping(true);
+    try {
+      const response = await axios.post(`${API}/admin/scrape-waitsmart`);
+      toast.success(`Updated ${response.data.updated} hospitals, added ${response.data.added} new ones`);
+      fetchData();
+    } catch (error) {
+      toast.error("Failed to scrape WaitSmart");
+    }
+    setScraping(false);
+  };
+
   const toggleUserPaid = async (userId) => {
     try {
       const response = await axios.patch(`${API}/admin/users/${userId}/toggle-paid`);
@@ -1293,16 +1307,27 @@ const AdminPage = () => {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center gap-4 mb-8">
-          <div className="w-12 h-12 bg-[#005EB8] rounded-xl flex items-center justify-center">
-            <Shield className="w-6 h-6 text-white" />
+        <div className="flex items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-[#005EB8] rounded-xl flex items-center justify-center">
+              <Shield className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-[#0A1128]" style={{ fontFamily: "'Manrope', sans-serif" }}>
+                Admin Dashboard
+              </h1>
+              <p className="text-slate-500">Manage hospitals, wait times, and users</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-3xl font-bold text-[#0A1128]" style={{ fontFamily: "'Manrope', sans-serif" }}>
-              Admin Dashboard
-            </h1>
-            <p className="text-slate-500">Manage hospitals, wait times, and users</p>
-          </div>
+          <Button
+            onClick={triggerWaitSmartScrape}
+            disabled={scraping}
+            className="bg-[#007F3B] hover:bg-[#006630]"
+            data-testid="scrape-waitsmart-button"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${scraping ? 'animate-spin' : ''}`} />
+            {scraping ? 'Updating...' : 'Update from WaitSmart'}
+          </Button>
         </div>
 
         {/* Tabs */}
