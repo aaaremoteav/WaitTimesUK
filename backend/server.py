@@ -784,17 +784,6 @@ async def submit_hospital(hospital: HospitalCreate, user = Depends(require_auth)
 @api_router.post("/wait-times/update")
 async def update_wait_time(data: WaitTimeUpdate, user = Depends(require_auth)):
     """Update wait time for a hospital - requires location verification or admin approval"""
-    # Check cooldown
-    last_update = user.get("last_wait_update")
-    if last_update and not user.get("is_admin"):
-        last_update_time = datetime.fromisoformat(last_update)
-        cooldown_end = last_update_time + timedelta(minutes=15)
-        if datetime.now(timezone.utc) < cooldown_end:
-            remaining = (cooldown_end - datetime.now(timezone.utc)).seconds // 60
-            raise HTTPException(
-                status_code=429,
-                detail=f"Please wait {remaining + 1} minutes before updating again"
-            )
     
     # Check hospital exists and is approved
     hospital = await db.hospitals.find_one({"id": data.hospital_id, "is_approved": True})
