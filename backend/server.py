@@ -1007,18 +1007,19 @@ async def seed_data():
         await db.hospitals.insert_one(hospital_doc)
     
     # Create admin user
-    admin_exists = await db.users.find_one({"email": "admin@ae-wait.com"})
+    admin_exists = await db.users.find_one({"email": "harry.miles@aaasat.co.uk"})
     if not admin_exists:
         admin_doc = {
             "id": str(uuid.uuid4()),
-            "email": "admin@ae-wait.com",
-            "name": "Admin",
-            "password_hash": hash_password("Admin123!"),
+            "email": "harry.miles@aaasat.co.uk",
+            "name": "Harry Miles",
+            "password_hash": hash_password("lBPiq815!??!"),
             "is_paid": True,
             "is_admin": True,
             "payment_id": "admin",
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_wait_update": None
+            "last_wait_update": None,
+            "mask_name": True
         }
         await db.users.insert_one(admin_doc)
     
