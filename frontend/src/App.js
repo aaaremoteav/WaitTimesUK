@@ -3,7 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { Toaster, toast } from "sonner";
-import { Search, Clock, MapPin, Building2, User, LogOut, Shield, Plus, RefreshCw, CheckCircle, XCircle, Lock, ArrowUpDown, Settings, Mail } from "lucide-react";
+import { Search, Clock, MapPin, Building2, User, LogOut, Shield, Plus, RefreshCw, CheckCircle, XCircle, Lock, ArrowUpDown, Settings, Mail, MessageSquare, Eye, Trash2, ExternalLink } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./components/ui/card";
@@ -33,8 +33,6 @@ const NHSLogo = ({ className = "" }) => (
   </div>
 );
 
-const CONTACT_EMAIL = "harry.miles@aaasat.co.uk";
-
 // Auth Context
 const AuthContext = createContext(null);
 
@@ -52,19 +50,17 @@ const ContactDialog = ({ open, onOpenChange }) => {
     }
     
     setSending(true);
-    // Send via mailto with pre-filled content (opens user's email client)
-    const subject = encodeURIComponent(`WaitTimes.uk Contact: ${name}`);
-    const body = encodeURIComponent(`From: ${name}\nEmail: ${email}\n\nMessage:\n${message}`);
-    window.location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}&body=${body}`;
-    
-    setTimeout(() => {
-      toast.success("Opening your email client...");
-      setSending(false);
+    try {
+      await axios.post(`${API}/contact`, { name, email, message });
+      toast.success("Message sent! We'll get back to you soon.");
       onOpenChange(false);
       setName("");
       setEmail("");
       setMessage("");
-    }, 500);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to send message. Please try again.");
+    }
+    setSending(false);
   };
 
   return (
@@ -587,6 +583,7 @@ const HomePage = () => {
 
   const [locationDialogOpen, setLocationDialogOpen] = useState(false);
   const [pendingWaitUpdate, setPendingWaitUpdate] = useState(null);
+  const [gettingLocation, setGettingLocation] = useState(false);
 
   const handleUpdateWaitTime = (hospital) => {
     setSelectedHospital(hospital);
@@ -597,9 +594,19 @@ const HomePage = () => {
   const getUserLocation = () => {
     return new Promise((resolve) => {
       if (!navigator.geolocation) {
-        resolve(null);
+        toast.error("Your browser doesn't support location services");
+        resolve({ error: "not_supported" });
         return;
       }
+
+      // Detect if we're in an iframe (preview environments block geolocation)
+      const isInIframe = window.self !== window.top;
+      
+      if (isInIframe) {
+        resolve({ error: "iframe" });
+        return;
+      }
+      
       navigator.geolocation.getCurrentPosition(
         (position) => {
           resolve({
@@ -608,10 +615,18 @@ const HomePage = () => {
           });
         },
         (error) => {
-          console.log("Location error:", error);
-          resolve(null);
+          console.log("Location error:", error.code, error.message);
+          if (error.code === 1) {
+            resolve({ error: "denied" });
+          } else if (error.code === 2) {
+            resolve({ error: "unavailable" });
+          } else if (error.code === 3) {
+            resolve({ error: "timeout" });
+          } else {
+            resolve({ error: "unknown" });
+          }
         },
-        { timeout: 10000, enableHighAccuracy: true }
+        { timeout: 15000, enableHighAccuracy: false, maximumAge: 60000 }
       );
     });
   };
@@ -636,10 +651,30 @@ const HomePage = () => {
     
     let location = null;
     if (shareLocation) {
-      toast.info("Getting your location...");
+      setGettingLocation(true);
       location = await getUserLocation();
-      if (!location) {
-        toast.warning("Could not get location - submitting for admin approval");
+      setGettingLocation(false);
+      
+      if (location?.error) {
+        if (location.error === "iframe") {
+          toast.error("Location sharing is blocked in embedded views. Please open the app in a new browser tab.", { duration: 6000 });
+          return;
+        } else if (location.error === "denied") {
+          toast.error("Location access denied. Please enable location in your browser settings, then try again.");
+          return;
+        } else if (location.error === "unavailable") {
+          toast.error("Could not determine your location. Please try again or skip.");
+          return;
+        } else if (location.error === "timeout") {
+          toast.error("Location request timed out. Please try again or skip.");
+          return;
+        } else if (location.error === "not_supported") {
+          toast.error("Location not supported on this device. Sending for admin approval.");
+          location = null;
+        } else {
+          toast.error("Could not get location. Sending for admin approval.");
+          location = null;
+        }
       }
     }
 
@@ -946,7 +981,7 @@ const HomePage = () => {
 
       {/* Location Permission Dialog */}
       <Dialog open={locationDialogOpen} onOpenChange={(open) => {
-        if (!open) {
+        if (!open && !gettingLocation) {
           setLocationDialogOpen(false);
           setPendingWaitUpdate(null);
         }
@@ -958,38 +993,67 @@ const HomePage = () => {
               To verify you're at or near {selectedHospital?.name}, we need your location.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4 space-y-4">
-            <div className="p-4 bg-[#E5F2E8] rounded-lg">
-              <p className="text-sm text-[#007F3B] flex items-start gap-2">
-                <MapPin className="w-5 h-5 flex-shrink-0" />
-                <span><strong>Share location:</strong> Your update will be applied instantly if you're within 10km of the hospital.</span>
-              </p>
+          
+          {gettingLocation ? (
+            <div className="py-8 text-center">
+              <RefreshCw className="w-8 h-8 animate-spin mx-auto text-[#005EB8] mb-4" />
+              <p className="text-slate-600">Getting your location...</p>
+              <p className="text-sm text-slate-400 mt-2">Please allow location access when prompted</p>
             </div>
-            <div className="p-4 bg-slate-50 rounded-lg">
-              <p className="text-sm text-slate-600 flex items-start gap-2">
-                <Lock className="w-5 h-5 flex-shrink-0" />
-                <span><strong>Skip location:</strong> Your update will be sent to admin for manual approval.</span>
-              </p>
-            </div>
-          </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button 
-              variant="outline" 
-              onClick={() => submitWithLocation(false)}
-              className="w-full sm:w-auto"
-              data-testid="skip-location-button"
-            >
-              Skip - Send for Approval
-            </Button>
-            <Button 
-              className="bg-[#007F3B] hover:bg-[#006630] w-full sm:w-auto"
-              onClick={() => submitWithLocation(true)}
-              data-testid="share-location-button"
-            >
-              <MapPin className="w-4 h-4 mr-2" />
-              Share Location
-            </Button>
-          </DialogFooter>
+          ) : (
+            <>
+              <div className="py-4 space-y-4">
+                <div className="p-4 bg-[#E5F2E8] rounded-lg">
+                  <p className="text-sm text-[#007F3B] flex items-start gap-2">
+                    <MapPin className="w-5 h-5 flex-shrink-0" />
+                    <span><strong>Share location:</strong> Your update will be applied instantly if you're within 10km of the hospital.</span>
+                  </p>
+                </div>
+                <div className="p-4 bg-slate-50 rounded-lg">
+                  <p className="text-sm text-slate-600 flex items-start gap-2">
+                    <Lock className="w-5 h-5 flex-shrink-0" />
+                    <span><strong>Skip location:</strong> Your update will be sent to admin for manual approval.</span>
+                  </p>
+                </div>
+                {window.self !== window.top && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs text-blue-700 flex items-start gap-2">
+                      <ExternalLink className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Location blocked?</strong> Embedded previews may block location access. 
+                        <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="underline font-semibold ml-1">
+                          Open in a new tab
+                        </a> for full location support.
+                      </span>
+                    </p>
+                  </div>
+                )}
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-xs text-amber-700">
+                    <strong>Note:</strong> When you tap "Share Location", your browser will ask for permission. Make sure to tap "Allow" to share your location.
+                  </p>
+                </div>
+              </div>
+              <DialogFooter className="flex-col sm:flex-row gap-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => submitWithLocation(false)}
+                  className="w-full sm:w-auto"
+                  data-testid="skip-location-button"
+                >
+                  Skip - Send for Approval
+                </Button>
+                <Button 
+                  className="bg-[#007F3B] hover:bg-[#006630] w-full sm:w-auto"
+                  onClick={() => submitWithLocation(true)}
+                  data-testid="share-location-button"
+                >
+                  <MapPin className="w-4 h-4 mr-2" />
+                  Share Location
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1344,6 +1408,7 @@ const AdminPage = () => {
   const [pendingWaitUpdates, setPendingWaitUpdates] = useState([]);
   const [allHospitals, setAllHospitals] = useState([]);
   const [users, setUsers] = useState([]);
+  const [contactMessages, setContactMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("pending");
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -1363,16 +1428,18 @@ const AdminPage = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [pendingRes, pendingWaitRes, hospitalsRes, usersRes] = await Promise.all([
+      const [pendingRes, pendingWaitRes, hospitalsRes, usersRes, messagesRes] = await Promise.all([
         axios.get(`${API}/admin/pending-hospitals`),
         axios.get(`${API}/admin/pending-wait-updates`),
         axios.get(`${API}/hospitals`),
         axios.get(`${API}/admin/users`),
+        axios.get(`${API}/admin/messages`),
       ]);
       setPendingHospitals(pendingRes.data);
       setPendingWaitUpdates(pendingWaitRes.data);
       setAllHospitals(hospitalsRes.data);
       setUsers(usersRes.data);
+      setContactMessages(messagesRes.data);
     } catch (error) {
       toast.error("Failed to fetch data");
     }
@@ -1501,6 +1568,25 @@ const AdminPage = () => {
     }
   };
 
+  const markMessageRead = async (msgId) => {
+    try {
+      await axios.patch(`${API}/admin/messages/${msgId}/read`);
+      fetchData();
+    } catch (error) {
+      toast.error("Failed to mark message as read");
+    }
+  };
+
+  const deleteMessage = async (msgId) => {
+    try {
+      await axios.delete(`${API}/admin/messages/${msgId}`);
+      toast.success("Message deleted");
+      fetchData();
+    } catch (error) {
+      toast.error("Failed to delete message");
+    }
+  };
+
   if (!user?.is_admin) return null;
 
   return (
@@ -1536,6 +1622,7 @@ const AdminPage = () => {
             { id: "wait-updates", label: "Pending Wait Updates", count: pendingWaitUpdates.length },
             { id: "hospitals", label: "All Hospitals", count: allHospitals.length },
             { id: "users", label: "Users", count: users.length },
+            { id: "messages", label: "Messages", count: contactMessages.filter(m => !m.read).length },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1548,7 +1635,7 @@ const AdminPage = () => {
               data-testid={`admin-tab-${tab.id}`}
             >
               {tab.label}
-              <Badge variant={tab.count > 0 && (tab.id === "pending" || tab.id === "wait-updates") ? "destructive" : "secondary"} className="ml-2">{tab.count}</Badge>
+              <Badge variant={tab.count > 0 && (tab.id === "pending" || tab.id === "wait-updates" || tab.id === "messages") ? "destructive" : "secondary"} className="ml-2">{tab.count}</Badge>
             </button>
           ))}
         </div>
@@ -1751,6 +1838,62 @@ const AdminPage = () => {
                     </CardContent>
                   </Card>
                 ))}
+              </div>
+            )}
+
+            {/* Messages */}
+            {activeTab === "messages" && (
+              <div className="space-y-4">
+                {contactMessages.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                      <p className="text-slate-600">No contact messages yet</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  contactMessages.map((msg) => (
+                    <Card key={msg.id} className={!msg.read ? "border-l-4 border-l-[#005EB8]" : "opacity-75"} data-testid={`message-${msg.id}`}>
+                      <CardContent className="p-4">
+                        <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="font-bold text-[#0A1128]">{msg.name}</p>
+                              {!msg.read && <Badge className="bg-[#005EB8] text-xs">New</Badge>}
+                            </div>
+                            <p className="text-sm text-[#005EB8]">{msg.email}</p>
+                            <p className="text-sm text-slate-600 mt-2 whitespace-pre-wrap">{msg.message}</p>
+                            <p className="text-xs text-slate-400 mt-2">
+                              {new Date(msg.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            {!msg.read && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => markMessageRead(msg.id)}
+                                data-testid={`mark-read-${msg.id}`}
+                              >
+                                <Eye className="w-4 h-4 mr-1" />
+                                Mark Read
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => deleteMessage(msg.id)}
+                              data-testid={`delete-message-${msg.id}`}
+                            >
+                              <Trash2 className="w-4 h-4 mr-1" />
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
               </div>
             )}
           </>

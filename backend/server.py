@@ -17,9 +17,14 @@ import httpx
 import asyncio
 import re
 from bs4 import BeautifulSoup
+import resend
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# Resend configuration
+resend.api_key = os.environ.get('RESEND_API_KEY')
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -1054,6 +1059,86 @@ async def delete_user(user_id: str, user = Depends(require_admin)):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
     return {"message": "User deleted"}
+
+# ============== Contact Form ==============
+
+class ContactFormRequest(BaseModel):
+    name: str
+    email: EmailStr
+    message: str
+
+@api_router.post("/contact")
+async def submit_contact(data: ContactFormRequest):
+    """Submit a contact form message - stored in DB and forwarded via Resend"""
+    # Store in DB
+    msg_doc = {
+        "id": str(uuid.uuid4()),
+        "name": data.name,
+        "email": data.email,
+        "message": data.message,
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.contact_messages.insert_one(msg_doc)
+
+    # Try to send email via Resend
+    if resend.api_key and ADMIN_EMAIL:
+        try:
+            html_content = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <div style="background-color: #005EB8; padding: 20px; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 20px;">WaitTimes.uk - New Contact Message</h1>
+                </div>
+                <div style="padding: 20px; background-color: #f8fafc; border: 1px solid #e2e8f0;">
+                    <p><strong>From:</strong> {data.name}</p>
+                    <p><strong>Email:</strong> {data.email}</p>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;" />
+                    <p><strong>Message:</strong></p>
+                    <p style="white-space: pre-wrap;">{data.message}</p>
+                </div>
+                <div style="padding: 12px; text-align: center; color: #94a3b8; font-size: 12px;">
+                    Sent from WaitTimes.uk Contact Form
+                </div>
+            </div>
+            """
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "WaitTimes.uk <onboarding@resend.dev>",
+                "to": [ADMIN_EMAIL],
+                "subject": f"WaitTimes Contact: {data.name}",
+                "html": html_content
+            })
+        except Exception as e:
+            logging.error(f"Failed to send contact email via Resend: {e}")
+            # Message is still stored in DB, so it's not lost
+
+    return {"message": "Your message has been sent. We'll get back to you soon."}
+
+# ============== Admin Contact Messages ==============
+
+@api_router.get("/admin/messages")
+async def get_contact_messages(user = Depends(require_admin)):
+    """Get all contact form messages"""
+    messages = await db.contact_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return messages
+
+@api_router.patch("/admin/messages/{message_id}/read")
+async def mark_message_read(message_id: str, user = Depends(require_admin)):
+    """Mark a contact message as read"""
+    result = await db.contact_messages.update_one(
+        {"id": message_id},
+        {"$set": {"read": True}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"message": "Marked as read"}
+
+@api_router.delete("/admin/messages/{message_id}")
+async def delete_contact_message(message_id: str, user = Depends(require_admin)):
+    """Delete a contact message"""
+    result = await db.contact_messages.delete_one({"id": message_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"message": "Message deleted"}
 
 # ============== Seed Data ==============
 
