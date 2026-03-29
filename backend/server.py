@@ -242,69 +242,158 @@ def normalize_hospital_name(name: str) -> str:
     return name.strip()
 
 async def scrape_waitsmart():
-    """Scrape wait times from waitsmart.co.uk"""
+    """Scrape wait times from waitsmart.co.uk and add new hospitals"""
     global last_waitsmart_scrape
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
+        async with httpx.AsyncClient(timeout=60.0) as http_client:
+            wait_data = []
+            
+            # First scrape the main page for live wait times
             response = await http_client.get(
                 'https://waitsmart.co.uk/',
                 headers={'User-Agent': 'Mozilla/5.0 (compatible; AEWaitTimes/1.0)'}
             )
             
-            if response.status_code != 200:
-                logging.error(f"WaitSmart returned status {response.status_code}")
-                return {"updated": 0, "error": "Failed to fetch data"}
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Find hospital cards - they're in anchor tags with hospital-waiting-times in href
-            hospital_links = soup.find_all('a', href=re.compile(r'/hospital-waiting-times/'))
-            
-            wait_data = []
-            for link in hospital_links:
-                try:
-                    # Extract hospital name from the link text
-                    text_content = link.get_text(separator=' ', strip=True)
-                    
-                    # Look for wait time patterns
-                    wait_match = re.search(r'(\d+(?:\s*hr)?(?:\s*\d+)?\s*min|\d+\s*hr)\s*wait', text_content, re.IGNORECASE)
-                    if not wait_match:
-                        # Try simpler pattern
-                        wait_match = re.search(r'(\d+)\s*min\s*wait', text_content, re.IGNORECASE)
-                    
-                    if wait_match:
-                        wait_text = wait_match.group(1)
-                        wait_minutes = parse_wait_time_text(wait_text)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                hospital_links = soup.find_all('a', href=re.compile(r'/hospital-waiting-times/'))
+                
+                for link in hospital_links:
+                    try:
+                        text_content = link.get_text(separator=' ', strip=True)
+                        href = link.get('href', '')
                         
-                        # Extract hospital name (text before the wait time info)
-                        # Look for hospital name patterns
-                        name_match = re.match(r'^(?:MIU|A&E|UTC|Children\'s A&E|Urgent Treatment Centre)?\s*(.+?)(?:\s+Updated|\s+\d+\s*(?:min|hr))', text_content, re.IGNORECASE)
-                        if name_match:
-                            hospital_name = name_match.group(1).strip()
-                            if hospital_name and wait_minutes:
+                        wait_match = re.search(r'(\d+(?:\s*hr)?(?:\s*\d+)?\s*min|\d+\s*hr)\s*wait', text_content, re.IGNORECASE)
+                        if not wait_match:
+                            wait_match = re.search(r'(\d+)\s*min\s*wait', text_content, re.IGNORECASE)
+                        
+                        if wait_match:
+                            wait_text = wait_match.group(1)
+                            wait_minutes = parse_wait_time_text(wait_text)
+                            
+                            name_text = text_content
+                            for prefix in ['MIU', 'A&E', 'UTC', "Children's A&E", 'Urgent Treatment Centre', 'Emergency Gynaecology']:
+                                if name_text.startswith(prefix):
+                                    name_text = name_text[len(prefix):].strip()
+                            
+                            name_match = re.match(r'^(.+?)(?:\s+(?:Updated|NHS|Trust|\d+\s*(?:min|hr|waiting)))', name_text, re.IGNORECASE)
+                            if name_match:
+                                hospital_name = name_match.group(1).strip()
+                            else:
+                                slug = href.split('/')[-1] if href else ''
+                                hospital_name = slug.replace('-', ' ').replace('a and e', 'A&E').title()
+                            
+                            hospital_type = "A&E"
+                            if 'MIU' in text_content[:20]:
+                                hospital_type = "MIU"
+                            elif 'UTC' in text_content[:30] or 'Urgent Treatment' in text_content[:30]:
+                                hospital_type = "UTC"
+                            elif "Children" in text_content[:30]:
+                                hospital_type = "Children's A&E"
+                            
+                            if hospital_name and wait_minutes and len(hospital_name) > 3:
                                 wait_data.append({
                                     'name': hospital_name,
                                     'wait_minutes': wait_minutes,
-                                    'normalized_name': normalize_hospital_name(hospital_name)
+                                    'normalized_name': normalize_hospital_name(hospital_name),
+                                    'type': hospital_type,
+                                    'slug': href.split('/')[-1] if href else None,
+                                    'has_live_data': True
                                 })
-                except Exception as e:
-                    logging.error(f"Error parsing hospital link: {e}")
-                    continue
+                    except Exception as e:
+                        logging.error(f"Error parsing hospital link: {e}")
+                        continue
             
-            # Match with our database hospitals and update
-            updated_count = 0
-            our_hospitals = await db.hospitals.find({"is_approved": True}, {"_id": 0}).to_list(1000)
+            # Now scrape the departments page to get ALL hospitals
+            dept_response = await http_client.get(
+                'https://waitsmart.co.uk/departments',
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; AEWaitTimes/1.0)'}
+            )
             
-            for hospital in our_hospitals:
-                our_normalized = normalize_hospital_name(hospital['name'])
+            if dept_response.status_code == 200:
+                dept_soup = BeautifulSoup(dept_response.text, 'html.parser')
                 
-                # Find best match
+                # Find table rows
+                table = dept_soup.find('table')
+                if table:
+                    rows = table.find_all('tr')[1:]  # Skip header row
+                    
+                    existing_slugs = {d['slug'] for d in wait_data if d.get('slug')}
+                    
+                    for row in rows:
+                        try:
+                            cells = row.find_all('td')
+                            if len(cells) >= 4:
+                                # Column 0: Department name with link
+                                name_cell = cells[0]
+                                link = name_cell.find('a')
+                                if link:
+                                    href = link.get('href', '')
+                                    slug = href.split('/')[-1] if href else ''
+                                    name = link.get_text(strip=True)
+                                    
+                                    # Column 1: Type
+                                    dept_type = cells[1].get_text(strip=True)
+                                    
+                                    # Column 2: Trust
+                                    trust = cells[2].get_text(strip=True) if len(cells) > 2 else ''
+                                    
+                                    # Column 3: Area/Location
+                                    area = cells[3].get_text(strip=True) if len(cells) > 3 else ''
+                                    
+                                    # Skip if we already have this hospital with live data
+                                    if slug not in existing_slugs and name and len(name) > 3:
+                                        # Clean up name - remove type suffix if already in name
+                                        clean_name = name.replace(' A&E', '').replace(' MIU', '').replace(' UTC', '').strip()
+                                        
+                                        wait_data.append({
+                                            'name': name,
+                                            'clean_name': clean_name,
+                                            'wait_minutes': None,  # No live data
+                                            'normalized_name': normalize_hospital_name(name),
+                                            'type': dept_type if dept_type else 'A&E',
+                                            'area': area,
+                                            'trust': trust,
+                                            'slug': slug,
+                                            'has_live_data': False
+                                        })
+                        except Exception as e:
+                            logging.error(f"Error parsing department row: {e}")
+                            continue
+            
+            # Get existing hospitals
+            our_hospitals = await db.hospitals.find({}, {"_id": 0}).to_list(1000)
+            our_normalized_names = {normalize_hospital_name(h['name']): h for h in our_hospitals}
+            our_slugs = {h.get('waitsmart_slug'): h for h in our_hospitals if h.get('waitsmart_slug')}
+            
+            updated_count = 0
+            added_count = 0
+            matched_indices = set()
+            
+            # First pass: Update existing hospitals with live wait times
+            for hospital in our_hospitals:
+                if not hospital.get('is_approved'):
+                    continue
+                    
+                our_normalized = normalize_hospital_name(hospital['name'])
+                our_slug = hospital.get('waitsmart_slug')
+                
                 best_match = None
                 best_score = 0
+                best_idx = -1
                 
-                for scraped in wait_data:
-                    # Check for word overlap
+                for idx, scraped in enumerate(wait_data):
+                    if not scraped.get('has_live_data'):
+                        continue
+                    
+                    # Check slug match first
+                    if our_slug and scraped.get('slug') == our_slug:
+                        best_match = scraped
+                        best_idx = idx
+                        break
+                    
+                    # Check name similarity
                     our_words = set(our_normalized.split())
                     scraped_words = set(scraped['normalized_name'].split())
                     
@@ -312,16 +401,16 @@ async def scrape_waitsmart():
                         common = our_words.intersection(scraped_words)
                         score = len(common) / max(len(our_words), len(scraped_words))
                         
-                        # Also check if one contains the other
                         if our_normalized in scraped['normalized_name'] or scraped['normalized_name'] in our_normalized:
                             score = max(score, 0.8)
                         
                         if score > best_score and score >= 0.5:
                             best_score = score
                             best_match = scraped
+                            best_idx = idx
                 
-                if best_match:
-                    # Update the hospital with scraped data
+                if best_match and best_match.get('wait_minutes'):
+                    matched_indices.add(best_idx)
                     now = datetime.now(timezone.utc).isoformat()
                     await db.hospitals.update_one(
                         {"id": hospital['id']},
@@ -329,23 +418,88 @@ async def scrape_waitsmart():
                             "current_wait_minutes": best_match['wait_minutes'],
                             "last_updated": now,
                             "last_updated_by": "WaitSmart (Auto)",
-                            "last_updated_by_masked": False
+                            "last_updated_by_masked": False,
+                            "waitsmart_slug": best_match.get('slug')
                         }}
                     )
                     updated_count += 1
                     logging.info(f"Updated {hospital['name']} with {best_match['wait_minutes']} min from WaitSmart")
             
+            # Second pass: Add new hospitals from WaitSmart
+            for idx, scraped in enumerate(wait_data):
+                if idx in matched_indices:
+                    continue
+                
+                scraped_normalized = scraped['normalized_name']
+                scraped_slug = scraped.get('slug')
+                
+                # Check if already exists by slug or name
+                if scraped_slug and scraped_slug in our_slugs:
+                    continue
+                
+                is_duplicate = False
+                for existing_normalized in our_normalized_names:
+                    existing_words = set(existing_normalized.split())
+                    scraped_words = set(scraped_normalized.split())
+                    
+                    if existing_words and scraped_words:
+                        common = existing_words.intersection(scraped_words)
+                        score = len(common) / max(len(existing_words), len(scraped_words))
+                        # Only consider duplicate if very high match (70%+)
+                        if score >= 0.7:
+                            is_duplicate = True
+                            break
+                
+                if not is_duplicate and scraped['name'] and len(scraped['name']) > 5:
+                    now = datetime.now(timezone.utc).isoformat()
+                    
+                    # Build full name
+                    full_name = scraped.get('clean_name') or scraped['name']
+                    
+                    # Add type suffix if not already present
+                    type_suffix = scraped.get('type', 'A&E')
+                    if type_suffix and type_suffix not in full_name:
+                        full_name = f"{full_name} {type_suffix}"
+                    
+                    hospital_doc = {
+                        "id": str(uuid.uuid4()),
+                        "name": full_name,
+                        "address": scraped.get('area', 'UK'),
+                        "postcode": "",
+                        "latitude": None,
+                        "longitude": None,
+                        "is_approved": True,
+                        "submitted_by": "waitsmart",
+                        "submitted_by_email": "auto@waitsmart.co.uk",
+                        "current_wait_minutes": scraped.get('wait_minutes'),
+                        "last_updated": now if scraped.get('wait_minutes') else None,
+                        "last_updated_by": "WaitSmart (Auto)" if scraped.get('wait_minutes') else None,
+                        "last_updated_by_masked": False,
+                        "created_at": now,
+                        "source": "waitsmart",
+                        "waitsmart_slug": scraped.get('slug'),
+                        "trust": scraped.get('trust', '')
+                    }
+                    
+                    await db.hospitals.insert_one(hospital_doc)
+                    added_count += 1
+                    our_normalized_names[scraped_normalized] = hospital_doc
+                    if scraped_slug:
+                        our_slugs[scraped_slug] = hospital_doc
+                    logging.info(f"Added new hospital: {full_name}")
+            
             last_waitsmart_scrape = datetime.now(timezone.utc)
             
             return {
                 "updated": updated_count,
+                "added": added_count,
                 "scraped_count": len(wait_data),
                 "timestamp": last_waitsmart_scrape.isoformat()
             }
             
     except Exception as e:
         logging.error(f"Error scraping WaitSmart: {e}")
-        return {"updated": 0, "error": str(e)}
+        return {"updated": 0, "added": 0, "error": str(e)}
 
 async def auto_scrape_waitsmart():
     """Background task to scrape WaitSmart every hour"""
