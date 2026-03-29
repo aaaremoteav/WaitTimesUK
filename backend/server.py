@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -14,6 +14,9 @@ import jwt
 import bcrypt
 import math
 import httpx
+import asyncio
+import re
+from bs4 import BeautifulSoup
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -27,6 +30,9 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ.get('JWT_SECRET', 'ae-wait-times-secret-key-change-in-production')
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+
+# Last scrape timestamp
+last_waitsmart_scrape = None
 
 # Create the main app
 app = FastAPI(title="A&E Wait Times API")
@@ -189,6 +195,170 @@ async def get_postcode_coordinates(postcode: str) -> Optional[tuple]:
     except Exception as e:
         logging.error(f"Error fetching postcode coordinates: {e}")
     return None
+
+# ============== WaitSmart Scraper ==============
+
+def parse_wait_time_text(wait_text: str) -> Optional[int]:
+    """Parse wait time text like '5 min', '1 hr 30 min', '2 hr' into minutes"""
+    if not wait_text:
+        return None
+    
+    wait_text = wait_text.lower().strip()
+    
+    # Handle "Closed" or invalid
+    if 'closed' in wait_text or not wait_text:
+        return None
+    
+    total_minutes = 0
+    
+    # Match hours
+    hr_match = re.search(r'(\d+)\s*hr', wait_text)
+    if hr_match:
+        total_minutes += int(hr_match.group(1)) * 60
+    
+    # Match minutes
+    min_match = re.search(r'(\d+)\s*min', wait_text)
+    if min_match:
+        total_minutes += int(min_match.group(1))
+    
+    # If just a number, assume minutes
+    if total_minutes == 0:
+        num_match = re.search(r'(\d+)', wait_text)
+        if num_match:
+            total_minutes = int(num_match.group(1))
+    
+    return total_minutes if total_minutes > 0 else None
+
+def normalize_hospital_name(name: str) -> str:
+    """Normalize hospital name for matching"""
+    name = name.lower()
+    # Remove common suffixes
+    for suffix in ['a&e', 'a and e', 'miu', 'utc', "children's", 'emergency', 'hospital', 'infirmary']:
+        name = name.replace(suffix, '')
+    # Remove parenthetical locations
+    name = re.sub(r'\([^)]*\)', '', name)
+    # Remove extra whitespace
+    name = ' '.join(name.split())
+    return name.strip()
+
+async def scrape_waitsmart():
+    """Scrape wait times from waitsmart.co.uk"""
+    global last_waitsmart_scrape
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            response = await http_client.get(
+                'https://waitsmart.co.uk/',
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; AEWaitTimes/1.0)'}
+            )
+            
+            if response.status_code != 200:
+                logging.error(f"WaitSmart returned status {response.status_code}")
+                return {"updated": 0, "error": "Failed to fetch data"}
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find hospital cards - they're in anchor tags with hospital-waiting-times in href
+            hospital_links = soup.find_all('a', href=re.compile(r'/hospital-waiting-times/'))
+            
+            wait_data = []
+            for link in hospital_links:
+                try:
+                    # Extract hospital name from the link text
+                    text_content = link.get_text(separator=' ', strip=True)
+                    
+                    # Look for wait time patterns
+                    wait_match = re.search(r'(\d+(?:\s*hr)?(?:\s*\d+)?\s*min|\d+\s*hr)\s*wait', text_content, re.IGNORECASE)
+                    if not wait_match:
+                        # Try simpler pattern
+                        wait_match = re.search(r'(\d+)\s*min\s*wait', text_content, re.IGNORECASE)
+                    
+                    if wait_match:
+                        wait_text = wait_match.group(1)
+                        wait_minutes = parse_wait_time_text(wait_text)
+                        
+                        # Extract hospital name (text before the wait time info)
+                        # Look for hospital name patterns
+                        name_match = re.match(r'^(?:MIU|A&E|UTC|Children\'s A&E|Urgent Treatment Centre)?\s*(.+?)(?:\s+Updated|\s+\d+\s*(?:min|hr))', text_content, re.IGNORECASE)
+                        if name_match:
+                            hospital_name = name_match.group(1).strip()
+                            if hospital_name and wait_minutes:
+                                wait_data.append({
+                                    'name': hospital_name,
+                                    'wait_minutes': wait_minutes,
+                                    'normalized_name': normalize_hospital_name(hospital_name)
+                                })
+                except Exception as e:
+                    logging.error(f"Error parsing hospital link: {e}")
+                    continue
+            
+            # Match with our database hospitals and update
+            updated_count = 0
+            our_hospitals = await db.hospitals.find({"is_approved": True}, {"_id": 0}).to_list(1000)
+            
+            for hospital in our_hospitals:
+                our_normalized = normalize_hospital_name(hospital['name'])
+                
+                # Find best match
+                best_match = None
+                best_score = 0
+                
+                for scraped in wait_data:
+                    # Check for word overlap
+                    our_words = set(our_normalized.split())
+                    scraped_words = set(scraped['normalized_name'].split())
+                    
+                    if our_words and scraped_words:
+                        common = our_words.intersection(scraped_words)
+                        score = len(common) / max(len(our_words), len(scraped_words))
+                        
+                        # Also check if one contains the other
+                        if our_normalized in scraped['normalized_name'] or scraped['normalized_name'] in our_normalized:
+                            score = max(score, 0.8)
+                        
+                        if score > best_score and score >= 0.5:
+                            best_score = score
+                            best_match = scraped
+                
+                if best_match:
+                    # Update the hospital with scraped data
+                    now = datetime.now(timezone.utc).isoformat()
+                    await db.hospitals.update_one(
+                        {"id": hospital['id']},
+                        {"$set": {
+                            "current_wait_minutes": best_match['wait_minutes'],
+                            "last_updated": now,
+                            "last_updated_by": "WaitSmart (Auto)",
+                            "last_updated_by_masked": False
+                        }}
+                    )
+                    updated_count += 1
+                    logging.info(f"Updated {hospital['name']} with {best_match['wait_minutes']} min from WaitSmart")
+            
+            last_waitsmart_scrape = datetime.now(timezone.utc)
+            
+            return {
+                "updated": updated_count,
+                "scraped_count": len(wait_data),
+                "timestamp": last_waitsmart_scrape.isoformat()
+            }
+            
+    except Exception as e:
+        logging.error(f"Error scraping WaitSmart: {e}")
+        return {"updated": 0, "error": str(e)}
+
+async def auto_scrape_waitsmart():
+    """Background task to scrape WaitSmart every hour"""
+    while True:
+        try:
+            logging.info("Starting scheduled WaitSmart scrape...")
+            result = await scrape_waitsmart()
+            logging.info(f"WaitSmart scrape completed: {result}")
+        except Exception as e:
+            logging.error(f"Error in scheduled scrape: {e}")
+        
+        # Wait 1 hour
+        await asyncio.sleep(3600)
 
 # ============== Auth Routes ==============
 
@@ -536,6 +706,20 @@ async def admin_override_wait_time(data: AdminOverrideWaitTime, user = Depends(r
     
     return {"message": "Wait time updated by admin"}
 
+@api_router.post("/admin/scrape-waitsmart")
+async def admin_scrape_waitsmart(background_tasks: BackgroundTasks, user = Depends(require_admin)):
+    """Manually trigger WaitSmart scrape (admin only)"""
+    result = await scrape_waitsmart()
+    return result
+
+@api_router.get("/admin/scrape-status")
+async def get_scrape_status(user = Depends(require_admin)):
+    """Get last scrape timestamp"""
+    return {
+        "last_scrape": last_waitsmart_scrape.isoformat() if last_waitsmart_scrape else None,
+        "next_scrape_in": "~1 hour" if last_waitsmart_scrape else "Pending first scrape"
+    }
+
 @api_router.get("/admin/users")
 async def get_all_users(user = Depends(require_admin)):
     """Get all users (admin only)"""
@@ -711,3 +895,15 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on startup"""
+    # Run initial scrape after 10 seconds to let server start
+    asyncio.create_task(delayed_start_scraping())
+
+async def delayed_start_scraping():
+    """Delay the first scrape to let the server initialize"""
+    await asyncio.sleep(10)
+    logging.info("Starting WaitSmart auto-scraper...")
+    asyncio.create_task(auto_scrape_waitsmart())
