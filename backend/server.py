@@ -99,6 +99,21 @@ class HospitalResponse(BaseModel):
 class WaitTimeUpdate(BaseModel):
     hospital_id: str
     wait_minutes: int = Field(..., ge=0, le=720)
+    user_latitude: Optional[float] = None
+    user_longitude: Optional[float] = None
+
+class PendingWaitTimeUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    hospital_id: str
+    hospital_name: str
+    wait_minutes: int
+    submitted_by: str
+    submitted_by_email: str
+    user_latitude: Optional[float] = None
+    user_longitude: Optional[float] = None
+    distance_km: Optional[float] = None
+    created_at: str
 
 class PendingHospitalResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -768,7 +783,7 @@ async def submit_hospital(hospital: HospitalCreate, user = Depends(require_auth)
 
 @api_router.post("/wait-times/update")
 async def update_wait_time(data: WaitTimeUpdate, user = Depends(require_auth)):
-    """Update wait time for a hospital (15 min cooldown per user) - any authenticated user can update"""
+    """Update wait time for a hospital - requires location verification or admin approval"""
     # Check cooldown
     last_update = user.get("last_wait_update")
     if last_update and not user.get("is_admin"):
@@ -786,25 +801,83 @@ async def update_wait_time(data: WaitTimeUpdate, user = Depends(require_auth)):
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
     
-    # Update wait time
-    now = datetime.now(timezone.utc).isoformat()
-    await db.hospitals.update_one(
-        {"id": data.hospital_id},
-        {"$set": {
-            "current_wait_minutes": data.wait_minutes,
-            "last_updated": now,
-            "last_updated_by": user["name"],
-            "last_updated_by_masked": user.get("mask_name", True)
-        }}
-    )
+    # Admin can always update
+    if user.get("is_admin"):
+        now = datetime.now(timezone.utc).isoformat()
+        await db.hospitals.update_one(
+            {"id": data.hospital_id},
+            {"$set": {
+                "current_wait_minutes": data.wait_minutes,
+                "last_updated": now,
+                "last_updated_by": user["name"],
+                "last_updated_by_masked": user.get("mask_name", True)
+            }}
+        )
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"last_wait_update": now}}
+        )
+        return {"message": "Wait time updated successfully", "approved": True}
     
-    # Update user's last update time
-    await db.users.update_one(
-        {"id": user["id"]},
-        {"$set": {"last_wait_update": now}}
-    )
+    # Check if user shared location and is within vicinity (10km)
+    VICINITY_KM = 10
+    is_in_vicinity = False
+    distance_km = None
     
-    return {"message": "Wait time updated successfully"}
+    if data.user_latitude and data.user_longitude and hospital.get("latitude") and hospital.get("longitude"):
+        distance_km = calculate_distance(
+            data.user_latitude, data.user_longitude,
+            hospital["latitude"], hospital["longitude"]
+        )
+        is_in_vicinity = distance_km <= VICINITY_KM
+    
+    if is_in_vicinity:
+        # Auto-approve update
+        now = datetime.now(timezone.utc).isoformat()
+        await db.hospitals.update_one(
+            {"id": data.hospital_id},
+            {"$set": {
+                "current_wait_minutes": data.wait_minutes,
+                "last_updated": now,
+                "last_updated_by": user["name"],
+                "last_updated_by_masked": user.get("mask_name", True)
+            }}
+        )
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"last_wait_update": now}}
+        )
+        return {"message": "Wait time updated successfully", "approved": True}
+    else:
+        # Submit for admin approval
+        pending_id = str(uuid.uuid4())
+        pending_doc = {
+            "id": pending_id,
+            "hospital_id": data.hospital_id,
+            "hospital_name": hospital["name"],
+            "wait_minutes": data.wait_minutes,
+            "submitted_by": user["id"],
+            "submitted_by_name": user["name"],
+            "submitted_by_email": user["email"],
+            "user_latitude": data.user_latitude,
+            "user_longitude": data.user_longitude,
+            "distance_km": round(distance_km, 1) if distance_km else None,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.pending_wait_updates.insert_one(pending_doc)
+        
+        # Update user's last update time (so they can't spam pending requests)
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"last_wait_update": datetime.now(timezone.utc).isoformat()}}
+        )
+        
+        reason = "location not shared" if not data.user_latitude else f"too far from hospital ({round(distance_km, 1)}km away)"
+        return {
+            "message": f"Update submitted for admin approval ({reason})",
+            "approved": False,
+            "pending_id": pending_id
+        }
 
 # ============== Admin Routes ==============
 
@@ -840,6 +913,55 @@ async def reject_hospital(hospital_id: str, user = Depends(require_admin)):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Hospital not found or already approved")
     return {"message": "Hospital rejected and removed"}
+
+@api_router.get("/admin/pending-wait-updates", response_model=List[PendingWaitTimeUpdate])
+async def get_pending_wait_updates(user = Depends(require_admin)):
+    """Get list of pending wait time updates"""
+    updates = await db.pending_wait_updates.find({}, {"_id": 0}).to_list(100)
+    return [PendingWaitTimeUpdate(
+        id=u["id"],
+        hospital_id=u["hospital_id"],
+        hospital_name=u["hospital_name"],
+        wait_minutes=u["wait_minutes"],
+        submitted_by=u.get("submitted_by_name", "Unknown"),
+        submitted_by_email=u["submitted_by_email"],
+        user_latitude=u.get("user_latitude"),
+        user_longitude=u.get("user_longitude"),
+        distance_km=u.get("distance_km"),
+        created_at=u["created_at"]
+    ) for u in updates]
+
+@api_router.post("/admin/approve-wait-update/{update_id}")
+async def approve_wait_update(update_id: str, user = Depends(require_admin)):
+    """Approve a pending wait time update"""
+    pending = await db.pending_wait_updates.find_one({"id": update_id})
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending update not found")
+    
+    # Apply the update
+    now = datetime.now(timezone.utc).isoformat()
+    await db.hospitals.update_one(
+        {"id": pending["hospital_id"]},
+        {"$set": {
+            "current_wait_minutes": pending["wait_minutes"],
+            "last_updated": now,
+            "last_updated_by": pending.get("submitted_by_name", "Unknown"),
+            "last_updated_by_masked": True
+        }}
+    )
+    
+    # Remove from pending
+    await db.pending_wait_updates.delete_one({"id": update_id})
+    
+    return {"message": "Wait time update approved"}
+
+@api_router.delete("/admin/reject-wait-update/{update_id}")
+async def reject_wait_update(update_id: str, user = Depends(require_admin)):
+    """Reject a pending wait time update"""
+    result = await db.pending_wait_updates.delete_one({"id": update_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pending update not found")
+    return {"message": "Wait time update rejected"}
 
 @api_router.post("/admin/override-wait-time")
 async def admin_override_wait_time(data: AdminOverrideWaitTime, user = Depends(require_admin)):

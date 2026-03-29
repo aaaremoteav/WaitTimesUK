@@ -591,18 +591,50 @@ const HomePage = () => {
     setUpdateDialogOpen(true);
   };
 
+  const getUserLocation = () => {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve(null);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          });
+        },
+        () => {
+          resolve(null);
+        },
+        { timeout: 10000, enableHighAccuracy: true }
+      );
+    });
+  };
+
   const submitWaitTimeUpdate = async () => {
     if (!waitMinutes || isNaN(parseInt(waitMinutes))) {
       toast.error("Please enter a valid wait time");
       return;
     }
 
+    // Request location
+    toast.info("Checking your location...");
+    const location = await getUserLocation();
+
     try {
-      await axios.post(`${API}/wait-times/update`, {
+      const response = await axios.post(`${API}/wait-times/update`, {
         hospital_id: selectedHospital.id,
         wait_minutes: parseInt(waitMinutes),
+        user_latitude: location?.latitude || null,
+        user_longitude: location?.longitude || null,
       });
-      toast.success("Wait time updated successfully!");
+      
+      if (response.data.approved) {
+        toast.success("Wait time updated successfully!");
+      } else {
+        toast.info(response.data.message);
+      }
       setUpdateDialogOpen(false);
       fetchHospitals(searchPostcode, sortByWait);
     } catch (error) {
@@ -868,9 +900,12 @@ const HomePage = () => {
               className="mt-2"
               data-testid="wait-minutes-input"
             />
-            <p className="text-xs text-slate-500 mt-2">
-              You can update once every 15 minutes
-            </p>
+            <div className="mt-3 p-3 bg-slate-50 rounded-lg">
+              <p className="text-xs text-slate-500 flex items-start gap-2">
+                <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>We'll check your location to verify you're near this hospital. If not nearby, your update will be sent for admin approval.</span>
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setUpdateDialogOpen(false)}>
@@ -1235,6 +1270,7 @@ const AdminPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [pendingHospitals, setPendingHospitals] = useState([]);
+  const [pendingWaitUpdates, setPendingWaitUpdates] = useState([]);
   const [allHospitals, setAllHospitals] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1256,12 +1292,14 @@ const AdminPage = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [pendingRes, hospitalsRes, usersRes] = await Promise.all([
+      const [pendingRes, pendingWaitRes, hospitalsRes, usersRes] = await Promise.all([
         axios.get(`${API}/admin/pending-hospitals`),
+        axios.get(`${API}/admin/pending-wait-updates`),
         axios.get(`${API}/hospitals`),
         axios.get(`${API}/admin/users`),
       ]);
       setPendingHospitals(pendingRes.data);
+      setPendingWaitUpdates(pendingWaitRes.data);
       setAllHospitals(hospitalsRes.data);
       setUsers(usersRes.data);
     } catch (error) {
@@ -1287,6 +1325,26 @@ const AdminPage = () => {
       fetchData();
     } catch (error) {
       toast.error("Failed to reject hospital");
+    }
+  };
+
+  const approveWaitUpdate = async (id) => {
+    try {
+      await axios.post(`${API}/admin/approve-wait-update/${id}`);
+      toast.success("Wait time update approved!");
+      fetchData();
+    } catch (error) {
+      toast.error("Failed to approve wait update");
+    }
+  };
+
+  const rejectWaitUpdate = async (id) => {
+    try {
+      await axios.delete(`${API}/admin/reject-wait-update/${id}`);
+      toast.success("Wait time update rejected");
+      fetchData();
+    } catch (error) {
+      toast.error("Failed to reject wait update");
     }
   };
 
@@ -1401,9 +1459,10 @@ const AdminPage = () => {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-slate-200 pb-2">
+        <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2">
           {[
             { id: "pending", label: "Pending Hospitals", count: pendingHospitals.length },
+            { id: "wait-updates", label: "Pending Wait Updates", count: pendingWaitUpdates.length },
             { id: "hospitals", label: "All Hospitals", count: allHospitals.length },
             { id: "users", label: "Users", count: users.length },
           ].map((tab) => (
@@ -1418,7 +1477,7 @@ const AdminPage = () => {
               data-testid={`admin-tab-${tab.id}`}
             >
               {tab.label}
-              <Badge variant="secondary" className="ml-2">{tab.count}</Badge>
+              <Badge variant={tab.count > 0 && (tab.id === "pending" || tab.id === "wait-updates") ? "destructive" : "secondary"} className="ml-2">{tab.count}</Badge>
             </button>
           ))}
         </div>
@@ -1472,6 +1531,64 @@ const AdminPage = () => {
                             <XCircle className="w-4 h-4 mr-1" />
                             Reject
                           </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* Pending Wait Updates */}
+            {activeTab === "wait-updates" && (
+              <div className="space-y-4">
+                {pendingWaitUpdates.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <CheckCircle className="w-12 h-12 text-[#007F3B] mx-auto mb-4" />
+                      <p className="text-slate-600">No pending wait time updates to review</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  pendingWaitUpdates.map((update) => (
+                    <Card key={update.id} data-testid={`pending-wait-update-${update.id}`}>
+                      <CardContent className="p-4">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                          <div className="flex-1">
+                            <h3 className="font-bold text-[#0A1128]">{update.hospital_name}</h3>
+                            <p className="text-sm text-slate-600">
+                              Proposed wait time: <span className="font-semibold">{Math.floor(update.wait_minutes / 60)}h {update.wait_minutes % 60}m</span>
+                            </p>
+                            <p className="text-xs text-slate-400 mt-1">
+                              Submitted by: {update.submitted_by_email}
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              {update.distance_km 
+                                ? `Distance from hospital: ${update.distance_km}km (too far)`
+                                : "Location not shared"
+                              }
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="bg-[#007F3B] hover:bg-[#006630]"
+                              onClick={() => approveWaitUpdate(update.id)}
+                              data-testid={`approve-wait-update-${update.id}`}
+                            >
+                              <CheckCircle className="w-4 h-4 mr-1" />
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => rejectWaitUpdate(update.id)}
+                              data-testid={`reject-wait-update-${update.id}`}
+                            >
+                              <XCircle className="w-4 h-4 mr-1" />
+                              Reject
+                            </Button>
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
