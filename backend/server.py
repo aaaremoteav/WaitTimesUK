@@ -57,6 +57,7 @@ class UserResponse(BaseModel):
     is_paid: bool
     is_admin: bool
     created_at: str
+    mask_name: bool = True
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -84,6 +85,7 @@ class HospitalResponse(BaseModel):
     current_wait_minutes: Optional[int] = None
     last_updated: Optional[str] = None
     last_updated_by: Optional[str] = None
+    last_updated_by_masked: bool = True
     is_approved: bool
     created_at: str
     distance: Optional[float] = None
@@ -211,7 +213,8 @@ async def register(user_data: UserCreate):
         "is_admin": False,
         "payment_id": user_data.payment_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "last_wait_update": None
+        "last_wait_update": None,
+        "mask_name": True
     }
     
     await db.users.insert_one(user_doc)
@@ -226,7 +229,8 @@ async def register(user_data: UserCreate):
             name=user_doc["name"],
             is_paid=is_paid,
             is_admin=False,
-            created_at=user_doc["created_at"]
+            created_at=user_doc["created_at"],
+            mask_name=True
         )
     )
 
@@ -246,7 +250,8 @@ async def login(credentials: UserLogin):
             name=user["name"],
             is_paid=user["is_paid"],
             is_admin=user.get("is_admin", False),
-            created_at=user["created_at"]
+            created_at=user["created_at"],
+            mask_name=user.get("mask_name", True)
         )
     )
 
@@ -258,8 +263,27 @@ async def get_me(user = Depends(require_auth)):
         name=user["name"],
         is_paid=user["is_paid"],
         is_admin=user.get("is_admin", False),
-        created_at=user["created_at"]
+        created_at=user["created_at"],
+        mask_name=user.get("mask_name", True)
     )
+
+class UpdateProfileSettings(BaseModel):
+    mask_name: Optional[bool] = None
+
+@api_router.patch("/auth/profile")
+async def update_profile(settings: UpdateProfileSettings, user = Depends(require_auth)):
+    """Update user profile settings"""
+    update_data = {}
+    if settings.mask_name is not None:
+        update_data["mask_name"] = settings.mask_name
+    
+    if update_data:
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": update_data}
+        )
+    
+    return {"message": "Profile updated successfully"}
 
 @api_router.post("/auth/verify-payment")
 async def verify_payment(data: PaymentVerification):
@@ -326,6 +350,7 @@ async def get_hospitals(
             current_wait_minutes=h.get("current_wait_minutes"),
             last_updated=h.get("last_updated"),
             last_updated_by=h.get("last_updated_by"),
+            last_updated_by_masked=h.get("last_updated_by_masked", True),
             is_approved=h["is_approved"],
             created_at=h["created_at"],
             distance=round(h["distance"], 1) if h.get("distance") is not None else None
@@ -444,7 +469,8 @@ async def update_wait_time(data: WaitTimeUpdate, user = Depends(require_auth)):
         {"$set": {
             "current_wait_minutes": data.wait_minutes,
             "last_updated": now,
-            "last_updated_by": user["name"]
+            "last_updated_by": user["name"],
+            "last_updated_by_masked": user.get("mask_name", True)
         }}
     )
     

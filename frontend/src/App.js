@@ -3,7 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { Toaster, toast } from "sonner";
-import { Search, Clock, MapPin, Building2, User, LogOut, Shield, Plus, RefreshCw, CheckCircle, XCircle, Lock, ArrowUpDown } from "lucide-react";
+import { Search, Clock, MapPin, Building2, User, LogOut, Shield, Plus, RefreshCw, CheckCircle, XCircle, Lock, ArrowUpDown, Settings } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./components/ui/card";
@@ -18,10 +18,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
+import { Switch } from "./components/ui/switch";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 const PAYPAL_LINK = "https://www.paypal.com/ncp/payment/R6833KHFC5PCL";
+
+// NHS Logo SVG Component
+const NHSLogo = ({ className = "" }) => (
+  <div className={`bg-[#005EB8] rounded px-3 py-1 flex items-center justify-center ${className}`}>
+    <span className="text-white font-bold text-lg tracking-tight" style={{ fontFamily: "'Arial Black', 'Helvetica Neue', sans-serif" }}>
+      NHS
+    </span>
+  </div>
+);
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -101,9 +111,29 @@ const AuthProvider = ({ children }) => {
 
 // Header Component
 const Header = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [maskNameSetting, setMaskNameSetting] = useState(user?.mask_name ?? true);
+
+  useEffect(() => {
+    if (user) {
+      setMaskNameSetting(user.mask_name ?? true);
+    }
+  }, [user]);
+
+  const updateMaskNameSetting = async (value) => {
+    setMaskNameSetting(value);
+    try {
+      await axios.patch(`${API}/auth/profile`, { mask_name: value });
+      await refreshUser();
+      toast.success(value ? "Your name will be masked" : "Your name will be shown");
+    } catch (error) {
+      toast.error("Failed to update settings");
+      setMaskNameSetting(!value);
+    }
+  };
 
   return (
     <header className="bg-white/90 backdrop-blur-xl border-b border-slate-200 sticky top-0 z-50">
@@ -114,40 +144,77 @@ const Header = () => {
             onClick={() => navigate("/")}
             data-testid="header-logo"
           >
-            <div className="w-10 h-10 bg-[#005EB8] rounded-lg flex items-center justify-center">
-              <Clock className="w-6 h-6 text-white" />
-            </div>
-            <span className="font-bold text-xl text-[#0A1128]" style={{ fontFamily: "'Manrope', sans-serif" }}>
+            <NHSLogo className="h-8 w-auto" />
+            <span className="font-bold text-xl text-[#0A1128] hidden sm:inline" style={{ fontFamily: "'Manrope', sans-serif" }}>
               A&E Wait Times
             </span>
           </div>
 
           <div className="flex items-center gap-3">
             {user ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="gap-2" data-testid="user-menu-button">
-                    <User className="w-4 h-4" />
-                    <span className="hidden sm:inline">{user.name}</span>
-                    {user.is_admin && <Badge variant="secondary" className="ml-1">Admin</Badge>}
-                    {user.is_paid && !user.is_admin && <Badge className="ml-1 bg-[#007F3B]">Paid</Badge>}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {user.is_admin && (
-                    <DropdownMenuItem onClick={() => navigate("/admin")} data-testid="admin-menu-item">
-                      <Shield className="w-4 h-4 mr-2" />
-                      Admin Dashboard
+              <>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2" data-testid="user-menu-button">
+                      <User className="w-4 h-4" />
+                      <span className="hidden sm:inline">{user.name}</span>
+                      {user.is_admin && <Badge variant="secondary" className="ml-1">Admin</Badge>}
+                      {user.is_paid && !user.is_admin && <Badge className="ml-1 bg-[#007F3B]">Paid</Badge>}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setSettingsOpen(true)} data-testid="settings-menu-item">
+                      <Settings className="w-4 h-4 mr-2" />
+                      Settings
                     </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={logout} data-testid="logout-menu-item">
-                    <LogOut className="w-4 h-4 mr-2" />
-                    Logout
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    {user.is_admin && (
+                      <DropdownMenuItem onClick={() => navigate("/admin")} data-testid="admin-menu-item">
+                        <Shield className="w-4 h-4 mr-2" />
+                        Admin Dashboard
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={logout} data-testid="logout-menu-item">
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Logout
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Settings Dialog */}
+                <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Settings</DialogTitle>
+                      <DialogDescription>
+                        Manage your profile preferences
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-4 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label htmlFor="mask-name" className="text-base font-medium">Mask my name</Label>
+                          <p className="text-sm text-slate-500 mt-1">
+                            When enabled, your name will appear as "{user?.name ? (user.name.split(' ')[0]?.slice(0,4) + '* **' + (user.name.split(' ')[1]?.slice(-3) || '***')) : 'Harr* **les'}" instead of "{user?.name || 'Harry Miles'}"
+                          </p>
+                        </div>
+                        <Switch
+                          id="mask-name"
+                          checked={maskNameSetting}
+                          onCheckedChange={updateMaskNameSetting}
+                          data-testid="mask-name-switch"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button onClick={() => setSettingsOpen(false)}>
+                        Done
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </>
             ) : (
               <div className="flex gap-2">
                 <Button 
@@ -220,8 +287,8 @@ const HospitalCard = ({ hospital, canSeeWaitTimes, onUpdateWaitTime, index }) =>
     return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
   };
 
-  const maskName = (name) => {
-    if (!name) return "";
+  const maskName = (name, shouldMask = true) => {
+    if (!name || !shouldMask) return name;
     // Handle "(Admin)" suffix
     const isAdmin = name.includes("(Admin)");
     const cleanName = name.replace(" (Admin)", "").trim();
@@ -294,7 +361,7 @@ const HospitalCard = ({ hospital, canSeeWaitTimes, onUpdateWaitTime, index }) =>
                 <>
                   <span className="block">{formatLastUpdated(hospital.last_updated)}</span>
                   {hospital.last_updated_by && (
-                    <span className="block">by {maskName(hospital.last_updated_by)}</span>
+                    <span className="block">by {maskName(hospital.last_updated_by, hospital.last_updated_by_masked)}</span>
                   )}
                 </>
               ) : (
