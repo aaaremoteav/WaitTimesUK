@@ -220,6 +220,32 @@ const HospitalCard = ({ hospital, canSeeWaitTimes, onUpdateWaitTime, index }) =>
     return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
   };
 
+  const maskName = (name) => {
+    if (!name) return "";
+    // Handle "(Admin)" suffix
+    const isAdmin = name.includes("(Admin)");
+    const cleanName = name.replace(" (Admin)", "").trim();
+    
+    const parts = cleanName.split(" ");
+    if (parts.length === 1) {
+      // Single name: show first 3 chars + ***
+      const first = parts[0];
+      return first.slice(0, 3) + "***" + (isAdmin ? " (Admin)" : "");
+    }
+    
+    // Multiple parts: mask first and last name
+    const firstName = parts[0];
+    const lastName = parts[parts.length - 1];
+    
+    // First name: show first 4 chars (or less if shorter) + *
+    const maskedFirst = firstName.slice(0, Math.min(4, firstName.length)) + "*";
+    
+    // Last name: ** + last 3 chars (or less if shorter)
+    const maskedLast = "**" + lastName.slice(-Math.min(3, lastName.length));
+    
+    return maskedFirst + " " + maskedLast + (isAdmin ? " (Admin)" : "");
+  };
+
   return (
     <Card 
       className={`hospital-card bg-white border border-slate-200 shadow-sm animate-fade-in-up stagger-${(index % 5) + 1}`}
@@ -268,7 +294,7 @@ const HospitalCard = ({ hospital, canSeeWaitTimes, onUpdateWaitTime, index }) =>
                 <>
                   <span className="block">{formatLastUpdated(hospital.last_updated)}</span>
                   {hospital.last_updated_by && (
-                    <span className="block">by {hospital.last_updated_by}</span>
+                    <span className="block">by {maskName(hospital.last_updated_by)}</span>
                   )}
                 </>
               ) : (
