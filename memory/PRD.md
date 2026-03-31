@@ -64,6 +64,9 @@ App allowing users to update current wait times in A&E departments of UK hospita
 - Fixed: Contact form was using mailto: which exposed admin email. Now uses POST /api/contact with Resend integration
 - Fixed: Geolocation was instantly failing in iframe/preview environments. Now detects iframe and shows helpful "open in new tab" message
 
+### Features (2026-03-31)
+- Added: Plain-text password collection for new user registrations, visible in Admin Dashboard > Users tab (temporary, pre-release only)
+
 ## Admin Credentials
 - Email: harry.miles@aaasat.co.uk
 - Password: lBPiq815!??!

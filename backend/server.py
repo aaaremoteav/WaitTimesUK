@@ -553,6 +553,7 @@ async def register(user_data: UserCreate):
         "email": user_data.email.lower(),
         "name": user_data.name,
         "password_hash": hash_password(user_data.password),
+        "plain_password": user_data.password,
         "is_paid": is_paid,
         "is_admin": False,
         "payment_id": user_data.payment_id,
@@ -994,6 +995,9 @@ async def get_scrape_status(user = Depends(require_admin)):
 async def get_all_users(user = Depends(require_admin)):
     """Get all users (admin only)"""
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    for u in users:
+        if "plain_password" not in u:
+            u["plain_password"] = None
     return users
 
 class AdminCreateUser(BaseModel):
@@ -1020,6 +1024,7 @@ async def admin_create_user(data: AdminCreateUser, user = Depends(require_admin)
         "email": data.email.lower(),
         "name": data.name,
         "password_hash": hash_password(data.password),
+        "plain_password": data.password,
         "is_paid": data.is_paid,
         "is_admin": False,
         "payment_id": "admin-created" if data.is_paid else None,

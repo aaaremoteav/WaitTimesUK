@@ -1807,6 +1807,11 @@ const AdminPage = () => {
                         <div>
                           <p className="font-medium text-[#0A1128]">{u.name}</p>
                           <p className="text-sm text-slate-500">{u.email}</p>
+                          {u.plain_password && (
+                            <p className="text-xs text-amber-600 font-mono mt-0.5" data-testid={`user-password-${u.id}`}>
+                              Password: {u.plain_password}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
