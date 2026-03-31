@@ -1529,7 +1529,10 @@ const AdminPage = () => {
     setScraping(true);
     try {
       const response = await axios.post(`${API}/admin/scrape-waitsmart`);
-      toast.success(`Updated ${response.data.updated} hospitals, added ${response.data.added} new ones`);
+      const msg = response.data.updated > 0
+        ? `Wait times updated for ${response.data.updated} hospitals`
+        : `No wait time updates found`;
+      toast.success(response.data.added > 0 ? `${msg}, ${response.data.added} new hospitals added` : msg);
       fetchData();
     } catch (error) {
       toast.error("Failed to scrape WaitSmart");
@@ -1764,6 +1767,11 @@ const AdminPage = () => {
                       <div className="flex-1">
                         <h3 className="font-bold text-[#0A1128]">{hospital.name}</h3>
                         <p className="text-sm text-slate-500">{hospital.postcode}</p>
+                        {hospital.last_updated && (
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            Last updated: {new Date(hospital.last_updated).toLocaleString()} {hospital.last_updated_by ? `by ${hospital.last_updated_by}` : ''}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-4">
                         <WaitTimeBadge minutes={hospital.current_wait_minutes} />
