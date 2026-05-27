@@ -22,7 +22,7 @@ import { Switch } from "./components/ui/switch";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
-const PAYPAL_LINK = "https://www.paypal.com/ncp/payment/R6833KHFC5PCL";
+const PAYPAL_LINK = "https://www.paypal.com/ncp/payment/H4T8H3P9MMVJC";
 
 // NHS Logo SVG Component
 const NHSLogo = ({ className = "" }) => (
@@ -587,7 +587,7 @@ const HomePage = () => {
 
   const handleUpdateWaitTime = (hospital) => {
     setSelectedHospital(hospital);
-    setWaitMinutes(hospital.current_wait_minutes?.toString() || "");
+    setWaitMinutes("");
     setUpdateDialogOpen(true);
   };
 
@@ -878,7 +878,7 @@ const HomePage = () => {
                 <Lock className="w-8 h-8 text-[#005EB8]" />
                 <div>
                   <p className="font-semibold text-[#0A1128]">Upgrade to see wait times</p>
-                  <p className="text-sm text-slate-600">One-time payment of £4.99 for lifetime access</p>
+                  <p className="text-sm text-slate-600">One-time payment of £0.99 for lifetime access</p>
                 </div>
               </div>
               <Button 
@@ -886,7 +886,7 @@ const HomePage = () => {
                 onClick={() => window.open(PAYPAL_LINK, "_blank")}
                 data-testid="unlock-payment-button"
               >
-                Upgrade for £4.99
+                Upgrade for £0.99
               </Button>
             </CardContent>
           </Card>
@@ -899,7 +899,7 @@ const HomePage = () => {
                 <Lock className="w-8 h-8 text-[#B38000]" />
                 <div>
                   <p className="font-semibold text-[#0A1128]">Create a free account</p>
-                  <p className="text-sm text-slate-600">Sign up free, upgrade for £4.99 to see wait times</p>
+                  <p className="text-sm text-slate-600">Sign up free, upgrade for £0.99 to see wait times</p>
                 </div>
               </div>
               <Button 
@@ -1379,7 +1379,7 @@ const RegisterPage = () => {
               </li>
               <li className="flex items-center gap-2">
                 <Lock className="w-3 h-3 text-slate-400" />
-                <span className="text-slate-400">See wait times (£4.99 upgrade)</span>
+                <span className="text-slate-400">See wait times (£0.99 upgrade)</span>
               </li>
             </ul>
           </div>
@@ -1488,7 +1488,7 @@ const AdminPage = () => {
 
   const handleOverride = (hospital) => {
     setSelectedHospital(hospital);
-    setOverrideMinutes(hospital.current_wait_minutes?.toString() || "");
+    setOverrideMinutes("");
     setOverrideDialogOpen(true);
   };
 
