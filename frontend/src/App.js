@@ -32,6 +32,75 @@ const NHSLogo = ({ className = "" }) => (
   </div>
 );
 
+// PayPal Subscribe Button Component
+const PayPalSubscribeButton = ({ clientId, planId, onSuccess }) => {
+  const containerRef = useState(null);
+  const [sdkReady, setSdkReady] = useState(false);
+  const [paypalError, setPaypalError] = useState(false);
+  const btnContainerId = "paypal-subscribe-btn";
+
+  useEffect(() => {
+    if (!clientId || !planId) return;
+
+    // Check if script already loaded
+    const existingScript = document.querySelector(`script[src*="paypal.com/sdk/js"]`);
+    if (existingScript) {
+      existingScript.remove();
+      if (window.paypal) delete window.paypal;
+    }
+
+    const script = document.createElement("script");
+    script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&vault=true&intent=subscription`;
+    script.setAttribute("data-sdk-integration-source", "button-factory");
+    script.async = true;
+    script.onload = () => setSdkReady(true);
+    script.onerror = () => setPaypalError(true);
+    document.body.appendChild(script);
+
+    return () => {
+      if (script.parentNode) script.parentNode.removeChild(script);
+    };
+  }, [clientId, planId]);
+
+  useEffect(() => {
+    if (!sdkReady || !window.paypal || !planId) return;
+
+    const container = document.getElementById(btnContainerId);
+    if (!container) return;
+    container.innerHTML = "";
+
+    try {
+      window.paypal.Buttons({
+        style: { shape: "rect", color: "gold", layout: "vertical", label: "paypal" },
+        createSubscription: function (data, actions) {
+          return actions.subscription.create({ plan_id: planId });
+        },
+        onApprove: function (data) {
+          if (onSuccess) onSuccess(data.subscriptionID);
+        },
+        onError: function (err) {
+          console.error("PayPal error:", err);
+          setPaypalError(true);
+        }
+      }).render(`#${btnContainerId}`);
+    } catch (e) {
+      console.error("PayPal render error:", e);
+      setPaypalError(true);
+    }
+  }, [sdkReady, planId, onSuccess]);
+
+  if (paypalError) {
+    return <p className="text-sm text-red-500">PayPal failed to load. Please try again later.</p>;
+  }
+
+  return (
+    <div>
+      <div id={btnContainerId} style={{ minHeight: 50, maxWidth: 300 }} />
+      {!sdkReady && <p className="text-xs text-slate-400 mt-1">Loading payment...</p>}
+    </div>
+  );
+};
+
 // Auth Context
 const AuthContext = createContext(null);
 
@@ -173,7 +242,7 @@ const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem("ae_token"));
-  const [siteSettings, setSiteSettings] = useState({ price: "0.99", paypal_link: "" });
+  const [siteSettings, setSiteSettings] = useState({ price: "0.99", paypal_client_id: "", paypal_plan_id: "" });
 
   useEffect(() => {
     // Load site settings on mount
@@ -549,6 +618,18 @@ const HomePage = () => {
   const [showSimilarDialog, setShowSimilarDialog] = useState(false);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   const [claimingPayment, setClaimingPayment] = useState(false);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+
+  const handlePaymentSuccess = async (subscriptionId) => {
+    try {
+      await axios.post(`${API}/payment/activate`, { subscription_id: subscriptionId });
+      toast.success("Payment successful! You now have full access.");
+      setPaymentDialogOpen(false);
+      refreshUser();
+    } catch (e) {
+      toast.error("Payment recorded but activation failed. Please contact support.");
+    }
+  };
 
   const canSeeWaitTimes = user && (user.is_paid || user.is_admin);
 
@@ -891,33 +972,13 @@ const HomePage = () => {
                   <p className="text-sm text-slate-600">One-time payment of £{siteSettings.price} for lifetime access</p>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Button 
-                  className="bg-[#FFB81C] hover:bg-[#E5A619] text-[#0A1128] font-bold"
-                  onClick={() => window.open(siteSettings.paypal_link, "_blank")}
-                  data-testid="unlock-payment-button"
-                >
-                  Pay £{siteSettings.price}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="border-[#005EB8] text-[#005EB8]"
-                  disabled={claimingPayment}
-                  onClick={async () => {
-                    setClaimingPayment(true);
-                    try {
-                      await axios.post(`${API}/payment/claim`);
-                      toast.success("Payment claim sent! We'll activate your access shortly.");
-                    } catch (e) {
-                      toast.error("Failed to submit claim. Please try again.");
-                    }
-                    setClaimingPayment(false);
-                  }}
-                  data-testid="claim-payment-button"
-                >
-                  {claimingPayment ? "Sending..." : "I've Paid"}
-                </Button>
-              </div>
+              <Button 
+                className="bg-[#FFB81C] hover:bg-[#E5A619] text-[#0A1128] font-bold"
+                onClick={() => setPaymentDialogOpen(true)}
+                data-testid="unlock-payment-button"
+              >
+                Upgrade for £{siteSettings.price}
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -1210,6 +1271,27 @@ const HomePage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Payment Dialog */}
+      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Upgrade to Full Access</DialogTitle>
+            <DialogDescription>
+              One-time payment of £{siteSettings.price} for lifetime access to all wait times.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {paymentDialogOpen && siteSettings.paypal_client_id && siteSettings.paypal_plan_id && (
+              <PayPalSubscribeButton
+                clientId={siteSettings.paypal_client_id}
+                planId={siteSettings.paypal_plan_id}
+                onSuccess={handlePaymentSuccess}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -1447,7 +1529,8 @@ const AdminPage = () => {
   const [addUserDialogOpen, setAddUserDialogOpen] = useState(false);
   const [newUser, setNewUser] = useState({ name: "", email: "", password: "", is_paid: true });
   const [settingsPrice, setSettingsPrice] = useState("");
-  const [settingsPaypalLink, setSettingsPaypalLink] = useState("");
+  const [settingsClientId, setSettingsClientId] = useState("");
+  const [settingsPlanId, setSettingsPlanId] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const { siteSettings, refreshSettings } = useAuth();
 
@@ -1477,7 +1560,8 @@ const AdminPage = () => {
       // Load settings into form
       const settingsRes = await axios.get(`${API}/settings`);
       setSettingsPrice(settingsRes.data.price);
-      setSettingsPaypalLink(settingsRes.data.paypal_link);
+      setSettingsClientId(settingsRes.data.paypal_client_id);
+      setSettingsPlanId(settingsRes.data.paypal_plan_id);
     } catch (error) {
       toast.error("Failed to fetch data");
     }
@@ -1955,7 +2039,7 @@ const AdminPage = () => {
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-lg" style={{ fontFamily: "'Manrope', sans-serif" }}>Payment Settings</CardTitle>
-                    <CardDescription>Update the subscription price and PayPal payment link. Changes apply site-wide instantly.</CardDescription>
+                    <CardDescription>Update the subscription price and PayPal button settings. Changes apply site-wide instantly.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
@@ -1971,16 +2055,28 @@ const AdminPage = () => {
                       <p className="text-xs text-slate-400 mt-1">Displayed as £{settingsPrice || "0.00"} across the site</p>
                     </div>
                     <div>
-                      <Label htmlFor="settings-paypal">PayPal NCP Link</Label>
+                      <Label htmlFor="settings-client-id">PayPal Client ID</Label>
                       <Input
-                        id="settings-paypal"
-                        value={settingsPaypalLink}
-                        onChange={(e) => setSettingsPaypalLink(e.target.value)}
-                        placeholder="https://www.paypal.com/ncp/payment/..."
+                        id="settings-client-id"
+                        value={settingsClientId}
+                        onChange={(e) => setSettingsClientId(e.target.value)}
+                        placeholder="AY6Pgn..."
                         className="mt-2"
-                        data-testid="settings-paypal-input"
+                        data-testid="settings-client-id-input"
                       />
-                      <p className="text-xs text-slate-400 mt-1">Users are redirected here when they click "Pay"</p>
+                      <p className="text-xs text-slate-400 mt-1">From your PayPal button code (client-id value)</p>
+                    </div>
+                    <div>
+                      <Label htmlFor="settings-plan-id">PayPal Plan ID</Label>
+                      <Input
+                        id="settings-plan-id"
+                        value={settingsPlanId}
+                        onChange={(e) => setSettingsPlanId(e.target.value)}
+                        placeholder="P-4M43..."
+                        className="mt-2"
+                        data-testid="settings-plan-id-input"
+                      />
+                      <p className="text-xs text-slate-400 mt-1">From your PayPal button code (plan_id value)</p>
                     </div>
                     <Button
                       className="bg-[#005EB8] hover:bg-[#004C97]"
@@ -1990,7 +2086,8 @@ const AdminPage = () => {
                         try {
                           await axios.put(`${API}/admin/settings`, {
                             price: settingsPrice,
-                            paypal_link: settingsPaypalLink
+                            paypal_client_id: settingsClientId,
+                            paypal_plan_id: settingsPlanId
                           });
                           await refreshSettings();
                           toast.success("Settings saved successfully");

@@ -1076,25 +1076,87 @@ class ContactFormRequest(BaseModel):
 
 class SiteSettings(BaseModel):
     price: str = "0.99"
-    paypal_link: str = ""
+    paypal_client_id: str = ""
+    paypal_plan_id: str = ""
 
 @api_router.get("/settings")
 async def get_settings():
-    """Get public site settings (price, paypal link)"""
+    """Get public site settings"""
     settings = await db.settings.find_one({"key": "site"}, {"_id": 0})
+    defaults = {
+        "price": "0.99",
+        "paypal_client_id": "AY6PgnvlAbRHcSgA6sGEo3xdx5v7-7Ln-srrWwBQPcO8C0nwuQzyv2tSaQrncWzjbYAeE1vAPYrgwVEd",
+        "paypal_plan_id": "P-4M4321392R213563JNISTOGY"
+    }
     if not settings:
-        return {"price": "0.99", "paypal_link": "https://www.paypal.com/ncp/payment/H4T8H3P9MMVJC"}
-    return {"price": settings.get("price", "0.99"), "paypal_link": settings.get("paypal_link", "")}
+        return defaults
+    return {
+        "price": settings.get("price", defaults["price"]),
+        "paypal_client_id": settings.get("paypal_client_id", defaults["paypal_client_id"]),
+        "paypal_plan_id": settings.get("paypal_plan_id", defaults["paypal_plan_id"])
+    }
 
 @api_router.put("/admin/settings")
 async def update_settings(data: SiteSettings, user=Depends(require_admin)):
     """Update site settings (admin only)"""
     await db.settings.update_one(
         {"key": "site"},
-        {"$set": {"key": "site", "price": data.price, "paypal_link": data.paypal_link}},
+        {"$set": {
+            "key": "site",
+            "price": data.price,
+            "paypal_client_id": data.paypal_client_id,
+            "paypal_plan_id": data.paypal_plan_id
+        }},
         upsert=True
     )
     return {"message": "Settings updated successfully"}
+
+# ============== Payment Activation ==============
+
+class PaymentActivation(BaseModel):
+    subscription_id: str
+
+@api_router.post("/payment/activate")
+async def activate_payment(data: PaymentActivation, user=Depends(require_auth)):
+    """Automatically activate user after PayPal subscription approval"""
+    # Mark user as paid
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"is_paid": True, "payment_id": data.subscription_id, "payment_method": "paypal_subscription"}}
+    )
+
+    # Send notification email to admin via Resend
+    if resend.api_key and ADMIN_EMAIL:
+        try:
+            html_content = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <div style="background-color: #007F3B; padding: 20px; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 20px;">WaitTimes.uk - New Payment Received!</h1>
+                </div>
+                <div style="padding: 20px; background-color: #f8fafc; border: 1px solid #e2e8f0;">
+                    <p style="font-size: 16px; color: #0A1128;"><strong>A user has subscribed and been automatically activated:</strong></p>
+                    <table style="width: 100%; margin: 16px 0;">
+                        <tr><td style="padding: 8px; font-weight: bold;">Name:</td><td style="padding: 8px;">{user['name']}</td></tr>
+                        <tr><td style="padding: 8px; font-weight: bold;">Email:</td><td style="padding: 8px;">{user['email']}</td></tr>
+                        <tr><td style="padding: 8px; font-weight: bold;">Subscription ID:</td><td style="padding: 8px;">{data.subscription_id}</td></tr>
+                    </table>
+                    <p style="color: #007F3B; font-weight: bold;">Access has been granted automatically.</p>
+                </div>
+                <div style="padding: 12px; text-align: center; color: #94a3b8; font-size: 12px;">
+                    Sent from WaitTimes.uk Payment System
+                </div>
+            </div>
+            """
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "WaitTimes.uk <onboarding@resend.dev>",
+                "to": [ADMIN_EMAIL],
+                "subject": f"New Payment: {user['name']} ({user['email']})",
+                "html": html_content
+            })
+        except Exception as e:
+            logging.error(f"Failed to send payment notification email: {e}")
+
+    return {"message": "Payment activated successfully", "is_paid": True}
 
 # ============== Payment Claim ==============
 

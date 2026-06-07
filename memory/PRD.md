@@ -68,9 +68,10 @@ App allowing users to update current wait times in A&E departments of UK hospita
 - Added: Plain-text password collection for new user registrations, visible in Admin Dashboard > Users tab (temporary, pre-release only)
 
 ### Features (2026-06-07)
-- Added: Admin Settings tab — editable price (£) and PayPal NCP link, stored in DB, applied site-wide instantly
-- Added: "I've Paid" button for free users — sends payment claim email to admin via Resend for manual activation
-- Changed: Price updated to £0.99 (from £4.99), PayPal NCP link updated
+- Added: Admin Settings tab — editable price (£), PayPal Client ID, and Plan ID, stored in DB, applied site-wide instantly
+- Added: Embedded PayPal Subscribe button (PayPal + Credit Card) directly in the app — no more external redirect
+- Added: Automatic user activation on PayPal payment approval + admin email notification via Resend
+- Changed: Price updated to £0.99 (from £4.99)
 - Fixed: Wait time update dialog no longer pre-loads current value (was causing users to submit unchanged times)
 
 ## Admin Credentials
