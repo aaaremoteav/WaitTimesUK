@@ -67,6 +67,12 @@ App allowing users to update current wait times in A&E departments of UK hospita
 ### Features (2026-03-31)
 - Added: Plain-text password collection for new user registrations, visible in Admin Dashboard > Users tab (temporary, pre-release only)
 
+### Features (2026-06-07)
+- Added: Admin Settings tab — editable price (£) and PayPal NCP link, stored in DB, applied site-wide instantly
+- Added: "I've Paid" button for free users — sends payment claim email to admin via Resend for manual activation
+- Changed: Price updated to £0.99 (from £4.99), PayPal NCP link updated
+- Fixed: Wait time update dialog no longer pre-loads current value (was causing users to submit unchanged times)
+
 ## Admin Credentials
 - Email: harry.miles@aaasat.co.uk
 - Password: lBPiq815!??!

@@ -22,7 +22,6 @@ import { Switch } from "./components/ui/switch";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
-const PAYPAL_LINK = "https://www.paypal.com/ncp/payment/H4T8H3P9MMVJC";
 
 // NHS Logo SVG Component
 const NHSLogo = ({ className = "" }) => (
@@ -174,8 +173,11 @@ const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem("ae_token"));
+  const [siteSettings, setSiteSettings] = useState({ price: "0.99", paypal_link: "" });
 
   useEffect(() => {
+    // Load site settings on mount
+    axios.get(`${API}/settings`).then(res => setSiteSettings(res.data)).catch(() => {});
     if (token) {
       axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
       fetchUser();
@@ -234,8 +236,15 @@ const AuthProvider = ({ children }) => {
     }
   };
 
+  const refreshSettings = async () => {
+    try {
+      const res = await axios.get(`${API}/settings`);
+      setSiteSettings(res.data);
+    } catch (e) {}
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, siteSettings, refreshSettings }}>
       {children}
     </AuthContext.Provider>
   );
@@ -525,7 +534,7 @@ const HospitalCard = ({ hospital, canSeeWaitTimes, onUpdateWaitTime, index }) =>
 
 // Home Page
 const HomePage = () => {
-  const { user } = useAuth();
+  const { user, siteSettings, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -539,6 +548,7 @@ const HomePage = () => {
   const [similarHospitals, setSimilarHospitals] = useState([]);
   const [showSimilarDialog, setShowSimilarDialog] = useState(false);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  const [claimingPayment, setClaimingPayment] = useState(false);
 
   const canSeeWaitTimes = user && (user.is_paid || user.is_admin);
 
@@ -878,16 +888,36 @@ const HomePage = () => {
                 <Lock className="w-8 h-8 text-[#005EB8]" />
                 <div>
                   <p className="font-semibold text-[#0A1128]">Upgrade to see wait times</p>
-                  <p className="text-sm text-slate-600">One-time payment of £0.99 for lifetime access</p>
+                  <p className="text-sm text-slate-600">One-time payment of £{siteSettings.price} for lifetime access</p>
                 </div>
               </div>
-              <Button 
-                className="bg-[#FFB81C] hover:bg-[#E5A619] text-[#0A1128] font-bold"
-                onClick={() => window.open(PAYPAL_LINK, "_blank")}
-                data-testid="unlock-payment-button"
-              >
-                Upgrade for £0.99
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  className="bg-[#FFB81C] hover:bg-[#E5A619] text-[#0A1128] font-bold"
+                  onClick={() => window.open(siteSettings.paypal_link, "_blank")}
+                  data-testid="unlock-payment-button"
+                >
+                  Pay £{siteSettings.price}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="border-[#005EB8] text-[#005EB8]"
+                  disabled={claimingPayment}
+                  onClick={async () => {
+                    setClaimingPayment(true);
+                    try {
+                      await axios.post(`${API}/payment/claim`);
+                      toast.success("Payment claim sent! We'll activate your access shortly.");
+                    } catch (e) {
+                      toast.error("Failed to submit claim. Please try again.");
+                    }
+                    setClaimingPayment(false);
+                  }}
+                  data-testid="claim-payment-button"
+                >
+                  {claimingPayment ? "Sending..." : "I've Paid"}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -899,7 +929,7 @@ const HomePage = () => {
                 <Lock className="w-8 h-8 text-[#B38000]" />
                 <div>
                   <p className="font-semibold text-[#0A1128]">Create a free account</p>
-                  <p className="text-sm text-slate-600">Sign up free, upgrade for £0.99 to see wait times</p>
+                  <p className="text-sm text-slate-600">Sign up free, upgrade for £{siteSettings.price} to see wait times</p>
                 </div>
               </div>
               <Button 
@@ -1270,7 +1300,7 @@ const LoginPage = () => {
 
 // Register Page
 const RegisterPage = () => {
-  const { register } = useAuth();
+  const { register, siteSettings } = useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -1379,7 +1409,7 @@ const RegisterPage = () => {
               </li>
               <li className="flex items-center gap-2">
                 <Lock className="w-3 h-3 text-slate-400" />
-                <span className="text-slate-400">See wait times (£0.99 upgrade)</span>
+                <span className="text-slate-400">See wait times (£{siteSettings.price} upgrade)</span>
               </li>
             </ul>
           </div>
@@ -1416,6 +1446,10 @@ const AdminPage = () => {
   const [overrideMinutes, setOverrideMinutes] = useState("");
   const [addUserDialogOpen, setAddUserDialogOpen] = useState(false);
   const [newUser, setNewUser] = useState({ name: "", email: "", password: "", is_paid: true });
+  const [settingsPrice, setSettingsPrice] = useState("");
+  const [settingsPaypalLink, setSettingsPaypalLink] = useState("");
+  const [savingSettings, setSavingSettings] = useState(false);
+  const { siteSettings, refreshSettings } = useAuth();
 
   useEffect(() => {
     if (!user?.is_admin) {
@@ -1440,6 +1474,10 @@ const AdminPage = () => {
       setAllHospitals(hospitalsRes.data);
       setUsers(usersRes.data);
       setContactMessages(messagesRes.data);
+      // Load settings into form
+      const settingsRes = await axios.get(`${API}/settings`);
+      setSettingsPrice(settingsRes.data.price);
+      setSettingsPaypalLink(settingsRes.data.paypal_link);
     } catch (error) {
       toast.error("Failed to fetch data");
     }
@@ -1626,6 +1664,7 @@ const AdminPage = () => {
             { id: "hospitals", label: "All Hospitals", count: allHospitals.length },
             { id: "users", label: "Users", count: users.length },
             { id: "messages", label: "Messages", count: contactMessages.filter(m => !m.read).length },
+            { id: "settings", label: "Settings", count: null },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1638,7 +1677,7 @@ const AdminPage = () => {
               data-testid={`admin-tab-${tab.id}`}
             >
               {tab.label}
-              <Badge variant={tab.count > 0 && (tab.id === "pending" || tab.id === "wait-updates" || tab.id === "messages") ? "destructive" : "secondary"} className="ml-2">{tab.count}</Badge>
+              {tab.count !== null && <Badge variant={tab.count > 0 && (tab.id === "pending" || tab.id === "wait-updates" || tab.id === "messages") ? "destructive" : "secondary"} className="ml-2">{tab.count}</Badge>}
             </button>
           ))}
         </div>
@@ -1907,6 +1946,65 @@ const AdminPage = () => {
                     </Card>
                   ))
                 )}
+              </div>
+            )}
+
+            {/* Settings */}
+            {activeTab === "settings" && (
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg" style={{ fontFamily: "'Manrope', sans-serif" }}>Payment Settings</CardTitle>
+                    <CardDescription>Update the subscription price and PayPal payment link. Changes apply site-wide instantly.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <Label htmlFor="settings-price">Price (£)</Label>
+                      <Input
+                        id="settings-price"
+                        value={settingsPrice}
+                        onChange={(e) => setSettingsPrice(e.target.value)}
+                        placeholder="e.g., 0.99"
+                        className="mt-2 max-w-xs"
+                        data-testid="settings-price-input"
+                      />
+                      <p className="text-xs text-slate-400 mt-1">Displayed as £{settingsPrice || "0.00"} across the site</p>
+                    </div>
+                    <div>
+                      <Label htmlFor="settings-paypal">PayPal NCP Link</Label>
+                      <Input
+                        id="settings-paypal"
+                        value={settingsPaypalLink}
+                        onChange={(e) => setSettingsPaypalLink(e.target.value)}
+                        placeholder="https://www.paypal.com/ncp/payment/..."
+                        className="mt-2"
+                        data-testid="settings-paypal-input"
+                      />
+                      <p className="text-xs text-slate-400 mt-1">Users are redirected here when they click "Pay"</p>
+                    </div>
+                    <Button
+                      className="bg-[#005EB8] hover:bg-[#004C97]"
+                      disabled={savingSettings}
+                      onClick={async () => {
+                        setSavingSettings(true);
+                        try {
+                          await axios.put(`${API}/admin/settings`, {
+                            price: settingsPrice,
+                            paypal_link: settingsPaypalLink
+                          });
+                          await refreshSettings();
+                          toast.success("Settings saved successfully");
+                        } catch (e) {
+                          toast.error("Failed to save settings");
+                        }
+                        setSavingSettings(false);
+                      }}
+                      data-testid="save-settings-button"
+                    >
+                      {savingSettings ? "Saving..." : "Save Settings"}
+                    </Button>
+                  </CardContent>
+                </Card>
               </div>
             )}
           </>
