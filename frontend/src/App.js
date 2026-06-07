@@ -969,7 +969,7 @@ const HomePage = () => {
                 <Lock className="w-8 h-8 text-[#005EB8]" />
                 <div>
                   <p className="font-semibold text-[#0A1128]">Upgrade to see wait times</p>
-                  <p className="text-sm text-slate-600">One-time payment of £{siteSettings.price} for lifetime access</p>
+                  <p className="text-sm text-slate-600">Upgrade for only 99p to see wait times</p>
                 </div>
               </div>
               <Button 
@@ -1278,7 +1278,7 @@ const HomePage = () => {
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Upgrade to Full Access</DialogTitle>
             <DialogDescription>
-              One-time payment of £{siteSettings.price} for lifetime access to all wait times.
+              Upgrade for only 99p to see all wait times.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
@@ -2039,7 +2039,7 @@ const AdminPage = () => {
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-lg" style={{ fontFamily: "'Manrope', sans-serif" }}>Payment Settings</CardTitle>
-                    <CardDescription>Update the subscription price and PayPal button settings. Changes apply site-wide instantly.</CardDescription>
+                    <CardDescription>Update the price and PayPal button settings. Changes apply site-wide instantly.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
