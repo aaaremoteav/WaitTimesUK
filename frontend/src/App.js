@@ -672,9 +672,6 @@ const HomePage = () => {
     fetchHospitals(searchPostcode, newSort);
   };
 
-  const [locationDialogOpen, setLocationDialogOpen] = useState(false);
-  const [pendingWaitUpdate, setPendingWaitUpdate] = useState(null);
-  const [gettingLocation, setGettingLocation] = useState(false);
 
   const handleUpdateWaitTime = (hospital) => {
     setSelectedHospital(hospital);
@@ -682,45 +679,6 @@ const HomePage = () => {
     setUpdateDialogOpen(true);
   };
 
-  const getUserLocation = () => {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        toast.error("Your browser doesn't support location services");
-        resolve({ error: "not_supported" });
-        return;
-      }
-
-      // Detect if we're in an iframe (preview environments block geolocation)
-      const isInIframe = window.self !== window.top;
-      
-      if (isInIframe) {
-        resolve({ error: "iframe" });
-        return;
-      }
-      
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude
-          });
-        },
-        (error) => {
-          console.log("Location error:", error.code, error.message);
-          if (error.code === 1) {
-            resolve({ error: "denied" });
-          } else if (error.code === 2) {
-            resolve({ error: "unavailable" });
-          } else if (error.code === 3) {
-            resolve({ error: "timeout" });
-          } else {
-            resolve({ error: "unknown" });
-          }
-        },
-        { timeout: 15000, enableHighAccuracy: false, maximumAge: 60000 }
-      );
-    });
-  };
 
   const submitWaitTimeUpdate = async () => {
     if (!waitMinutes || isNaN(parseInt(waitMinutes))) {
@@ -728,62 +686,13 @@ const HomePage = () => {
       return;
     }
     
-    // Store the pending update and show location dialog
-    setPendingWaitUpdate({
-      hospital_id: selectedHospital.id,
-      wait_minutes: parseInt(waitMinutes),
-    });
-    setUpdateDialogOpen(false);
-    setLocationDialogOpen(true);
-  };
-
-  const submitWithLocation = async (shareLocation) => {
-    if (!pendingWaitUpdate) return;
-    
-    let location = null;
-    if (shareLocation) {
-      setGettingLocation(true);
-      location = await getUserLocation();
-      setGettingLocation(false);
-      
-      if (location?.error) {
-        if (location.error === "iframe") {
-          toast.error("Location sharing is blocked in embedded views. Please open the app in a new browser tab.", { duration: 6000 });
-          return;
-        } else if (location.error === "denied") {
-          toast.error("Location access denied. Please enable location in your browser settings, then try again.");
-          return;
-        } else if (location.error === "unavailable") {
-          toast.error("Could not determine your location. Please try again or skip.");
-          return;
-        } else if (location.error === "timeout") {
-          toast.error("Location request timed out. Please try again or skip.");
-          return;
-        } else if (location.error === "not_supported") {
-          toast.error("Location not supported on this device. Sending for admin approval.");
-          location = null;
-        } else {
-          toast.error("Could not get location. Sending for admin approval.");
-          location = null;
-        }
-      }
-    }
-
     try {
       const response = await axios.post(`${API}/wait-times/update`, {
-        hospital_id: pendingWaitUpdate.hospital_id,
-        wait_minutes: pendingWaitUpdate.wait_minutes,
-        user_latitude: location?.latitude || null,
-        user_longitude: location?.longitude || null,
+        hospital_id: selectedHospital.id,
+        wait_minutes: parseInt(waitMinutes),
       });
-      
-      if (response.data.approved) {
-        toast.success("Wait time updated successfully!");
-      } else {
-        toast.info(response.data.message);
-      }
-      setLocationDialogOpen(false);
-      setPendingWaitUpdate(null);
+      toast.success("Wait time updated successfully!");
+      setUpdateDialogOpen(false);
       fetchHospitals(searchPostcode, sortByWait);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to update wait time");
@@ -1067,84 +976,6 @@ const HomePage = () => {
               Update
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Location Permission Dialog */}
-      <Dialog open={locationDialogOpen} onOpenChange={(open) => {
-        if (!open && !gettingLocation) {
-          setLocationDialogOpen(false);
-          setPendingWaitUpdate(null);
-        }
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle style={{ fontFamily: "'Manrope', sans-serif" }}>Share Your Location?</DialogTitle>
-            <DialogDescription>
-              To verify you're at or near {selectedHospital?.name}, we need your location.
-            </DialogDescription>
-          </DialogHeader>
-          
-          {gettingLocation ? (
-            <div className="py-8 text-center">
-              <RefreshCw className="w-8 h-8 animate-spin mx-auto text-[#005EB8] mb-4" />
-              <p className="text-slate-600">Getting your location...</p>
-              <p className="text-sm text-slate-400 mt-2">Please allow location access when prompted</p>
-            </div>
-          ) : (
-            <>
-              <div className="py-4 space-y-4">
-                <div className="p-4 bg-[#E5F2E8] rounded-lg">
-                  <p className="text-sm text-[#007F3B] flex items-start gap-2">
-                    <MapPin className="w-5 h-5 flex-shrink-0" />
-                    <span><strong>Share location:</strong> Your update will be applied instantly if you're within 10km of the hospital.</span>
-                  </p>
-                </div>
-                <div className="p-4 bg-slate-50 rounded-lg">
-                  <p className="text-sm text-slate-600 flex items-start gap-2">
-                    <Lock className="w-5 h-5 flex-shrink-0" />
-                    <span><strong>Skip location:</strong> Your update will be sent to admin for manual approval.</span>
-                  </p>
-                </div>
-                {window.self !== window.top && (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-xs text-blue-700 flex items-start gap-2">
-                      <ExternalLink className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      <span>
-                        <strong>Location blocked?</strong> Embedded previews may block location access. 
-                        <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="underline font-semibold ml-1">
-                          Open in a new tab
-                        </a> for full location support.
-                      </span>
-                    </p>
-                  </div>
-                )}
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <p className="text-xs text-amber-700">
-                    <strong>Note:</strong> When you tap "Share Location", your browser will ask for permission. Make sure to tap "Allow" to share your location.
-                  </p>
-                </div>
-              </div>
-              <DialogFooter className="flex-col sm:flex-row gap-2">
-                <Button 
-                  variant="outline" 
-                  onClick={() => submitWithLocation(false)}
-                  className="w-full sm:w-auto"
-                  data-testid="skip-location-button"
-                >
-                  Skip - Send for Approval
-                </Button>
-                <Button 
-                  className="bg-[#007F3B] hover:bg-[#006630] w-full sm:w-auto"
-                  onClick={() => submitWithLocation(true)}
-                  data-testid="share-location-button"
-                >
-                  <MapPin className="w-4 h-4 mr-2" />
-                  Share Location
-                </Button>
-              </DialogFooter>
-            </>
-          )}
         </DialogContent>
       </Dialog>
 

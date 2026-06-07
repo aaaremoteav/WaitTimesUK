@@ -796,83 +796,22 @@ async def update_wait_time(data: WaitTimeUpdate, user = Depends(require_auth)):
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
     
-    # Admin can always update
-    if user.get("is_admin"):
-        now = datetime.now(timezone.utc).isoformat()
-        await db.hospitals.update_one(
-            {"id": data.hospital_id},
-            {"$set": {
-                "current_wait_minutes": data.wait_minutes,
-                "last_updated": now,
-                "last_updated_by": user["name"],
-                "last_updated_by_masked": user.get("mask_name", True)
-            }}
-        )
-        await db.users.update_one(
-            {"id": user["id"]},
-            {"$set": {"last_wait_update": now}}
-        )
-        return {"message": "Wait time updated successfully", "approved": True}
-    
-    # Check if user shared location and is within vicinity (10km)
-    VICINITY_KM = 10
-    is_in_vicinity = False
-    distance_km = None
-    
-    if data.user_latitude and data.user_longitude and hospital.get("latitude") and hospital.get("longitude"):
-        distance_km = calculate_distance(
-            data.user_latitude, data.user_longitude,
-            hospital["latitude"], hospital["longitude"]
-        )
-        is_in_vicinity = distance_km <= VICINITY_KM
-    
-    if is_in_vicinity:
-        # Auto-approve update
-        now = datetime.now(timezone.utc).isoformat()
-        await db.hospitals.update_one(
-            {"id": data.hospital_id},
-            {"$set": {
-                "current_wait_minutes": data.wait_minutes,
-                "last_updated": now,
-                "last_updated_by": user["name"],
-                "last_updated_by_masked": user.get("mask_name", True)
-            }}
-        )
-        await db.users.update_one(
-            {"id": user["id"]},
-            {"$set": {"last_wait_update": now}}
-        )
-        return {"message": "Wait time updated successfully", "approved": True}
-    else:
-        # Submit for admin approval
-        pending_id = str(uuid.uuid4())
-        pending_doc = {
-            "id": pending_id,
-            "hospital_id": data.hospital_id,
-            "hospital_name": hospital["name"],
-            "wait_minutes": data.wait_minutes,
-            "submitted_by": user["id"],
-            "submitted_by_name": user["name"],
-            "submitted_by_email": user["email"],
-            "user_latitude": data.user_latitude,
-            "user_longitude": data.user_longitude,
-            "distance_km": round(distance_km, 1) if distance_km else None,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        await db.pending_wait_updates.insert_one(pending_doc)
-        
-        # Update user's last update time (so they can't spam pending requests)
-        await db.users.update_one(
-            {"id": user["id"]},
-            {"$set": {"last_wait_update": datetime.now(timezone.utc).isoformat()}}
-        )
-        
-        reason = "location not shared" if not data.user_latitude else f"too far from hospital ({round(distance_km, 1)}km away)"
-        return {
-            "message": f"Update submitted for admin approval ({reason})",
-            "approved": False,
-            "pending_id": pending_id
-        }
+    # Auto-approve all updates
+    now = datetime.now(timezone.utc).isoformat()
+    await db.hospitals.update_one(
+        {"id": data.hospital_id},
+        {"$set": {
+            "current_wait_minutes": data.wait_minutes,
+            "last_updated": now,
+            "last_updated_by": user["name"],
+            "last_updated_by_masked": user.get("mask_name", True)
+        }}
+    )
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"last_wait_update": now}}
+    )
+    return {"message": "Wait time updated successfully", "approved": True}
 
 # ============== Admin Routes ==============
 
